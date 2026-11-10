@@ -124,6 +124,46 @@ enum Command {
         #[arg(long)]
         term_file: PathBuf,
     },
+    /// Read the rail-agnostic relayer HTTP interface.
+    Relayer {
+        #[command(subcommand)]
+        command: RelayerCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum RelayerCommand {
+    /// Print the relayer health document.
+    Health {
+        #[arg(long, env = "RBRIDGE_RELAYER", default_value = "http://127.0.0.1:8099")]
+        url: String,
+    },
+    /// Print per-chain status.
+    Chains {
+        #[arg(long, env = "RBRIDGE_RELAYER", default_value = "http://127.0.0.1:8099")]
+        url: String,
+    },
+    /// Print a deposit's state (null if the relayer does not know it).
+    Deposit {
+        #[arg(long, env = "RBRIDGE_RELAYER", default_value = "http://127.0.0.1:8099")]
+        url: String,
+        #[arg(long)]
+        id: String,
+    },
+    /// Print a withdrawal's state (null if the relayer does not know it).
+    Withdrawal {
+        #[arg(long, env = "RBRIDGE_RELAYER", default_value = "http://127.0.0.1:8099")]
+        url: String,
+        #[arg(long)]
+        id: String,
+    },
+    /// Print a deposit's attestation, or null while it is not ready.
+    Attestation {
+        #[arg(long, env = "RBRIDGE_RELAYER", default_value = "http://127.0.0.1:8099")]
+        url: String,
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[tokio::main]
@@ -274,6 +314,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "reply_source": response.reply_source,
                     "block": block_json(&response.block),
                 }))?
+            );
+        }
+        Command::Relayer { command } => relayer_command(command).await?,
+    }
+    Ok(())
+}
+
+async fn relayer_command(command: RelayerCommand) -> Result<(), Box<dyn std::error::Error>> {
+    use rbridge_sdk::RelayerClient;
+
+    match command {
+        RelayerCommand::Health { url } => {
+            let client = RelayerClient::new(url)?;
+            println!("{}", serde_json::to_string_pretty(&client.health().await?)?);
+        }
+        RelayerCommand::Chains { url } => {
+            let client = RelayerClient::new(url)?;
+            println!("{}", serde_json::to_string_pretty(&client.chains().await?)?);
+        }
+        RelayerCommand::Deposit { url, id } => {
+            let client = RelayerClient::new(url)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&client.deposit(&id).await?)?
+            );
+        }
+        RelayerCommand::Withdrawal { url, id } => {
+            let client = RelayerClient::new(url)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&client.withdrawal(&id).await?)?
+            );
+        }
+        RelayerCommand::Attestation { url, id } => {
+            let client = RelayerClient::new(url)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&client.attestation(&id).await?)?
             );
         }
     }

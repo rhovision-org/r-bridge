@@ -142,6 +142,23 @@ in-memory signer field, enter a 0x destination, and burn; the relayer unlocks on
 
 Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.md`.
 
+## Read the relayer
+
+The SDK exposes the rail-agnostic read API (`RelayerClient`) and the CLI wraps it. With
+`make mock-relayer` running on `:8099`:
+
+```bash
+cargo run -p rbridge-cli -- relayer health
+cargo run -p rbridge-cli -- relayer chains
+cargo run -p rbridge-cli -- relayer deposit --id <deposit-id>
+cargo run -p rbridge-cli -- relayer attestation --id <deposit-id>
+```
+
+`--url` (or `RBRIDGE_RELAYER`) points at the dev watcher instead (its `--metrics-port`,
+for example `http://127.0.0.1:9110`). The client accepts the mock's bare chain names and
+the watcher's per-chain objects; a 404 becomes `null`, so "not attested yet" is
+distinguishable from an error.
+
 ## Current status
 
 - Phase 1 rholo demo: PASS (22 checks).
@@ -153,6 +170,10 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
   `make reorg-demo`: an unprocessed rollback rewinds, a reorged settled deposit halts.
   `make metrics-demo` checks `/metrics`, `/health` and `/v1/chains`, including the
   halted state staying scrapeable.
+- Relayer read client: `RelayerClient` in the SDK and `rbridge relayer
+  health|chains|deposit|withdrawal|attestation` in the CLI. 8 client tests (both chain
+  shapes, 404-to-null, HTTP errors, path-safe ids) pass; the CLI was exercised live
+  against `make mock-relayer` (health, chains, deposit and attestation).
 - Web demo: live rholo bridge/vault reads, MetaMask ETH and USDT locks (approve +
   lock), TronLink TRX/TRC-20 deposits against the TVM vault, a WASM-signed rholo burn
   for withdraw, and rholo keystore create/import/load (Web3 v3, r-wallet compatible;

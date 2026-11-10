@@ -14,7 +14,12 @@ use rbridge_chain::RholoNode;
 
 pub use config::BridgeConfig;
 pub use portfolio::{AssetBalance, BalanceSource, Portfolio};
-pub use relayer::{DepositAttestation, RelayerApi, RelayerHealth};
+#[cfg(feature = "native")]
+pub use relayer::RelayerClient;
+pub use relayer::{
+    AttestationResponse, ChainStatus, DepositAttestation, DepositStatus, RelayerApi, RelayerHealth,
+    WithdrawalStatus,
+};
 
 /// An error from the SDK layer.
 #[derive(Debug, thiserror::Error)]

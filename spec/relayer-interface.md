@@ -74,6 +74,12 @@ internet without authentication.
 The dApp polls these. Anyone may submit a valid attestation to `Bridge.mint`; the
 verification is on-chain, so a relayer does not need to be the submitter.
 
+`rbridge-sdk` implements the read side as `RelayerClient` (`health`, `chains`, `deposit`,
+`attestation`, `withdrawal`), and the CLI exposes it as
+`rbridge relayer <command> --url …`. The client treats 404 as `None` and accepts both a
+bare chain array and `{"chains": [...]}`, so it works against the mock and the dev
+watcher without a rail-specific adapter.
+
 ## Journal
 
 The relayer persists at least:

@@ -12,7 +12,7 @@ workspace = true
 
 [features]
 default = ["native"]
-native = ["rbridge-chain/native"]
+native = ["rbridge-chain/native", "dep:reqwest"]
 wasm = ["rbridge-chain/wasm"]
 
 [dependencies]
@@ -22,3 +22,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
