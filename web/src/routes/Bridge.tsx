@@ -6,7 +6,11 @@ import { loadConfig } from "../lib/config";
 import { depositIdFor, lockErc20, lockEth } from "../lib/evm";
 import { keystoreAddress, revAddressFromEth, unlockKeystore } from "../lib/keystore";
 import { loadSavedKeystores } from "../lib/keystore-store";
-import { readRelayerDeposit, relayerUrlConfigured } from "../lib/relayer";
+import {
+  readRelayerDeposit,
+  readRelayerWithdrawal,
+  relayerUrlConfigured,
+} from "../lib/relayer";
 import { bridgeDeployTerm, burnCall } from "../lib/rholo";
 import {
   getTronWeb,
@@ -51,6 +55,9 @@ export default function Bridge() {
   const [relayerState, setRelayerState] = useState<string | null>(null);
   const [relayerError, setRelayerError] = useState<string | null>(null);
   const [withdrawal, setWithdrawal] = useState<WithdrawalState | null>(null);
+  const [withdrawalRelay, setWithdrawalRelay] = useState<string | null>(null);
+  const [withdrawalNativeTx, setWithdrawalNativeTx] = useState<string | null>(null);
+  const [withdrawalRelayError, setWithdrawalRelayError] = useState<string | null>(null);
 
   // Deployment assets only: ETH/USDT on the TVM vault, ETH/USDT on Anvil. Other
   // registry assets stay read-only until they are in a deployment.
@@ -149,6 +156,37 @@ export default function Bridge() {
     dry_run: "dry-run (no mint)",
     unreachable: "unreachable",
   };
+
+  const WITHDRAWAL_LABEL: Record<string, string> = {
+    waiting: "waiting for relayers",
+    unlocked: "unlocked on Anvil",
+    failed: "unlock failed",
+    ignored: "not handled by this relayer",
+    unreachable: "unreachable",
+  };
+
+  /** Follow a processed burn until the relayer unlocks it (or refuses). */
+  async function trackWithdrawal(base: string, withdrawalId: string) {
+    setWithdrawalRelay("waiting");
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        const view = await readRelayerWithdrawal(base, withdrawalId);
+        if (view) {
+          setWithdrawalRelay(view.state);
+          if (view.native_tx) setWithdrawalNativeTx(view.native_tx);
+          if (view.reason || view.error) {
+            setWithdrawalRelayError(view.reason ?? view.error ?? null);
+          }
+          if (["unlocked", "failed", "ignored"].includes(view.state)) return;
+        }
+      } catch (caught) {
+        setWithdrawalRelay("unreachable");
+        setWithdrawalRelayError(caught instanceof Error ? caught.message : String(caught));
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+  }
 
   async function trackDeposit(hash: string) {
     const base = config.relayerUrl.trim();
@@ -330,6 +368,9 @@ export default function Bridge() {
   async function burn() {
     setError(null);
     setWithdrawal(null);
+    setWithdrawalRelay(null);
+    setWithdrawalNativeTx(null);
+    setWithdrawalRelayError(null);
     if (!config.bridgeUri) {
       setError("Set the bridge URI in Settings first.");
       return;
@@ -376,6 +417,7 @@ export default function Bridge() {
       const client = new RholoClient(config.node);
       const deployId = await client.deploy(term, secret, 8_000_000n);
       setWithdrawal({ id: withdrawalId, state: "submitted", result: deployId });
+      let processed = false;
       for (let attempt = 0; attempt < 30; attempt += 1) {
         const status = JSON.parse(await client.deploy_status(deployId)) as {
           state: string;
@@ -388,9 +430,13 @@ export default function Bridge() {
             state: status.state,
             result: status.deploy_result ?? status.deploy_error,
           });
+          processed = status.state === "processedWithSuccess";
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      if (processed && relayerUrlConfigured(config.relayerUrl)) {
+        void trackWithdrawal(config.relayerUrl.trim(), withdrawalId);
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -644,7 +690,11 @@ export default function Bridge() {
           <p className="hint">
             Withdrawal <span className="mono">{withdrawal.id}</span>: {withdrawal.state}.{" "}
             {withdrawal.state === "processedWithSuccess"
-              ? "The relayer will unlock on Anvil and the destination balance updates after settlement."
+              ? withdrawalRelay
+                ? `Relayer ${WITHDRAWAL_LABEL[withdrawalRelay] ?? withdrawalRelay}${
+                    withdrawalNativeTx ? ` (tx ${withdrawalNativeTx})` : ""
+                  }${withdrawalRelayError ? ` — ${withdrawalRelayError}` : ""}.`
+                : "The relayer will unlock on Anvil and the destination balance updates after settlement."
               : String(withdrawal.result ?? "")}
           </p>
         ) : null}

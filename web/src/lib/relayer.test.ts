@@ -3,6 +3,7 @@ import {
   readRelayerChains,
   readRelayerDeposit,
   readRelayerHealth,
+  readRelayerWithdrawal,
   relayerUrlConfigured,
 } from "./relayer";
 
@@ -57,6 +58,38 @@ describe("relayer client", () => {
     stub({ state: "minted", signatures: ["aa"] });
     const deposit = await readRelayerDeposit("http://127.0.0.1:8099", "0xabc:0");
     expect(deposit?.state).toBe("minted");
+  });
+
+  it("returns null for a withdrawal the relayer has not judged yet", async () => {
+    stub({}, 404);
+    expect(await readRelayerWithdrawal("http://127.0.0.1:8099", "web-1")).toBeNull();
+  });
+
+  it("reads an unlocked withdrawal and encodes the id", async () => {
+    const fetchMock = stub({
+      withdrawal_id: "web withdraw/1",
+      state: "unlocked",
+      native_tx: "0xfeed",
+    });
+    const view = await readRelayerWithdrawal(
+      "http://127.0.0.1:8099",
+      "web withdraw/1",
+    );
+    expect(view?.state).toBe("unlocked");
+    expect(view?.native_tx).toBe("0xfeed");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://127.0.0.1:8099/v1/withdrawals/web%20withdraw%2F1",
+    );
+  });
+
+  it("surfaces the relayer's reason for ignoring a withdrawal", async () => {
+    stub({
+      withdrawal_id: "web-2",
+      state: "ignored",
+      reason: "unsupported destination for the dev watcher",
+    });
+    const view = await readRelayerWithdrawal("http://127.0.0.1:8099", "web-2");
+    expect(view?.reason).toMatch(/unsupported destination/);
   });
 
   it("reports non-200 responses", async () => {

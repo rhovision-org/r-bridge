@@ -32,7 +32,9 @@ module (next phase).
 - **Relayer status**: Overview shows the relayer's health, threshold/signers and per-chain
   head/enabled state; after an Anvil lock the Bridge reads the deposit id from the
   receipt and follows `/v1/deposits/{id}`, showing "waiting for relayers" → "minted on
-  rholo" (or failed/unreachable).
+  rholo" (or failed/unreachable). After a burn it follows `/v1/withdrawals/{id}`, showing
+  "waiting for relayers" → "unlocked on Anvil" with the native tx, or the relayer's
+  failed/unsupported reason.
 - **WASM-signed rholo burn** for the withdraw direction: either the imported keystore or
   the dev secret signs the deploy in the browser, and the relayer unlocks on Anvil.
 - **Portfolio** polls every 5 seconds, so a lock that the relayer mints appears as a
@@ -111,9 +113,11 @@ Playwright starts its own Anvil on `:8546`, deploys the vault and mock USDT with
 MetaMask-shaped EIP-1193 provider backed by that account, and a TronLink/TronWeb stub.
 The specs cover the ETH lock (including following the relayer to "minted"), the USDT
 approve+lock, the TronLink TRC-20 approve+lock, the Overview relayer card, the
-client-side cap refusal and keystore create/download/import. They do not need the
-rholo devnet because they stop before mint/burn. Requires Foundry; the CI `e2e` job
-installs Chromium and runs it.
+client-side cap refusal and keystore create/download/import. The withdrawal spec stubs
+the rholo node's HTTP API (`/api/v1/status`, `/deploy`, `/deploy-status`): the WASM
+signer, the burn term and the relayer polling are real, but no rholo cluster runs.
+These specs do not need the rholo devnet. Requires Foundry; the CI `e2e` job installs
+Chromium and runs it.
 
 Live reads are opt-in:
 

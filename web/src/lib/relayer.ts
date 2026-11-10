@@ -1,9 +1,10 @@
 /**
  * Browser client for the rail-agnostic relayer read API.
  *
- * Mirrors the Rust `RelayerClient`: health, chains and a deposit's state. A 404 is a
- * normal "not found yet" result; any other failure is an error the UI can show. The
- * relayer URL is user configuration, so this never assumes a deployment.
+ * Mirrors the Rust `RelayerClient`: health, chains, a deposit's state and a
+ * withdrawal's state. A 404 is a normal "not found yet" result; any other failure is an
+ * error the UI can show. The relayer URL is user configuration, so this never assumes a
+ * deployment.
  */
 
 export interface RelayerHealth {
@@ -29,6 +30,14 @@ export interface RelayerDeposit {
   state: string;
   message?: string | null;
   signatures?: string[];
+  error?: string | null;
+}
+
+export interface RelayerWithdrawal {
+  withdrawal_id?: string;
+  state: string;
+  native_tx?: string | null;
+  reason?: string | null;
   error?: string | null;
 }
 
@@ -94,5 +103,19 @@ export async function readRelayerDeposit(
   return getJson<RelayerDeposit>(
     url,
     `/v1/deposits/${encodeURIComponent(depositId)}`,
+  );
+}
+
+/**
+ * A 404 means the relayer has not seen the withdrawal yet: it appears once the scanner
+ * has judged it (unlocked, failed or ignored).
+ */
+export async function readRelayerWithdrawal(
+  url: string,
+  withdrawalId: string,
+): Promise<RelayerWithdrawal | null> {
+  return getJson<RelayerWithdrawal>(
+    url,
+    `/v1/withdrawals/${encodeURIComponent(withdrawalId)}`,
   );
 }

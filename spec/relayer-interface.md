@@ -77,8 +77,10 @@ verification is on-chain, so a relayer does not need to be the submitter.
 `rbridge-sdk` implements the read side as `RelayerClient` (`health`, `chains`, `deposit`,
 `attestation`, `withdrawal`), and the CLI exposes it as
 `rbridge relayer <command> --url …`. The web app uses the same paths directly: after a
-lock it takes the deposit id from the vault event and polls `/v1/deposits/{id}`, and the
-Overview card reads `/health` and `/v1/chains`. The clients treat 404 as `None` and
+lock it takes the deposit id from the vault event and polls `/v1/deposits/{id}`, after a
+processed burn it polls `/v1/withdrawals/{id}` until the native unlock (or the relayer's
+refusal) appears, and the Overview card reads `/health` and `/v1/chains`. The clients
+treat 404 as `None` and
 accept both a bare chain array and `{"chains": [...]}`, so they work against the mock
 and the dev watcher without a rail-specific adapter.
 

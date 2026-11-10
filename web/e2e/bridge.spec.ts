@@ -22,9 +22,12 @@ test.beforeAll(() => {
   state = JSON.parse(readFileSync(resolve(HERE, ".state.json"), "utf8")) as State;
 });
 
-async function configure(page: Page): Promise<void> {
+async function configure(
+  page: Page,
+  overrides: Record<string, unknown> = {},
+): Promise<void> {
   await page.addInitScript(
-    (config: State) => {
+    ({ config, overrides }: { config: State; overrides: Record<string, unknown> }) => {
       localStorage.setItem(
         "rbridge.config",
         JSON.stringify({
@@ -37,6 +40,7 @@ async function configure(page: Page): Promise<void> {
           relayerUrl: "http://127.0.0.1:9199",
           rholoAddress: "",
           anvilRpc: config.rpc,
+          ...overrides,
         }),
       );
 
@@ -123,7 +127,7 @@ async function configure(page: Page): Promise<void> {
         },
       });
     },
-    state,
+    { config: state, overrides },
   );
 }
 
@@ -160,8 +164,74 @@ async function routeRelayer(page: Page, depositState = "minted"): Promise<void> 
         json: { state: depositState, signatures: [] },
       });
     }
+    if (url.includes("/v1/withdrawals/")) {
+      return route.fulfill({
+        status: 200,
+        headers,
+        json: { state: "unlocked", native_tx: "0xfeed" },
+      });
+    }
     return route.fulfill({ status: 404, headers, json: {} });
   });
+}
+
+/**
+ * A stubbed rholo node: enough of /api/v1/{nodes,status,deploy,deploy-status} for the
+ * WASM signer to submit a deploy and see it processed. The deploy is recorded so the
+ * test can check the signed term; nothing on rholo actually runs.
+ */
+async function routeNode(
+  page: Page,
+): Promise<Array<{ data?: { term?: string } }>> {
+  const deploys: Array<{ data?: { term?: string } }> = [];
+  const headers = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-headers": "*",
+    "access-control-allow-methods": "*",
+  };
+  await page.route("http://127.0.0.1:40403/**", async (route) => {
+    const request = route.request();
+    if (request.method() === "OPTIONS") {
+      return route.fulfill({ status: 204, headers });
+    }
+    const url = request.url();
+    if (url.endsWith("/api/v1/nodes")) {
+      return route.fulfill({ status: 404, headers, json: {} });
+    }
+    if (url.endsWith("/api/v1/status")) {
+      return route.fulfill({
+        status: 200,
+        headers,
+        json: {
+          address: "",
+          networkId: "testnet",
+          shardId: "/root",
+          minPhloPrice: 1,
+          latestBlockNumber: 1,
+          proposer: true,
+          acceptsDeploys: true,
+        },
+      });
+    }
+    if (url.endsWith("/api/v1/deploy") && request.method() === "POST") {
+      deploys.push(request.postDataJSON() as { data?: { term?: string } });
+      return route.fulfill({ status: 200, headers, json: { message: "dispatch" } });
+    }
+    if (url.includes("/api/v1/deploy-status/")) {
+      return route.fulfill({
+        status: 200,
+        headers,
+        json: {
+          ProcessedWithSuccess: {
+            deployResult: [],
+            block: { blockHash: "00", blockNumber: 1 },
+          },
+        },
+      });
+    }
+    return route.fulfill({ status: 404, headers, json: {} });
+  });
+  return deploys;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -184,6 +254,37 @@ test("locks ETH through the configured vault and follows the relayer", async ({ 
   await expect(page.getByText(/relayer minted on rholo/)).toBeVisible();
   await page.goto("/#/");
   await expect(page.getByText(/locked 0\.1 ETH/)).toBeVisible();
+});
+
+test("burns in the browser and follows the withdrawal through the relayer", async ({
+  page,
+}) => {
+  // The node is stubbed: the WASM signer, the burn term and the relayer polling are
+  // real, but no rholo cluster runs in this suite.
+  await configure(page, { bridgeUri: "rho:id:testbridge" });
+  const deploys = await routeNode(page);
+  await routeRelayer(page);
+
+  await page.goto("/#/bridge");
+  await page.getByLabel("Direction").selectOption("withdraw");
+  await page.getByLabel("Amount").fill("0.05");
+  await page
+    .getByLabel("Native recipient")
+    .fill("0x2222222222222222222222222222222222222222");
+  await page
+    .getByLabel("or dev secret")
+    .fill("a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76");
+  await page.getByRole("button", { name: "Burn and unlock" }).click();
+
+  await expect(page.getByText(/processedWithSuccess/)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/Relayer unlocked on Anvil \(tx 0xfeed\)/)).toBeVisible();
+
+  expect(deploys).toHaveLength(1);
+  expect(deploys[0].data?.term).toContain('"burn"');
+  expect(deploys[0].data?.term).toContain(
+    '"0x2222222222222222222222222222222222222222"',
+  );
+  expect(deploys[0].data?.term).toContain('"web-withdraw-');
 });
 
 test("shows relayer health and chains on Overview", async ({ page }) => {
