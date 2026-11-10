@@ -146,8 +146,8 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
   funds via the admin refund.
 - Web demo: live rholo bridge/vault reads, MetaMask ETH and USDT locks (approve +
   lock), a WASM-signed rholo burn for withdraw, and rholo keystore import/create
-  (Web3 v3, r-wallet compatible); 19 unit + 5 opt-in live tests pass, and a Node smoke
-  test signs and submits a burn through the wasm client.
+  (Web3 v3, r-wallet compatible); 19 unit + 4 Playwright browser tests + 5 opt-in live
+  tests pass, and a Node smoke test signs and submits a burn through the wasm client.
 - Agoric vat: Zoe escrow/release contract passes deposit, 2-of-3 release, replay,
   below-threshold and wrong-digest tests. No live Agoric chain/IBC or Agoric watcher yet.
 - Not yet: Sepolia/Nile deployment, live Agoric/IBC, reorg handling, multi-validator

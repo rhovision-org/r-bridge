@@ -52,6 +52,7 @@ make build-contracts          # inline libs; writes contracts/rholo/build
 make contracts-check          # drift + 56 KiB budget
 make agoric-install agoric-test  # Agoric Zoe vat tests
 make web-check                # wasm + npm typecheck + vitest + build
+make web-e2e                  # Playwright browser tests (own Anvil on :8546)
 make docs-check               # mdBook build
 make check                    # all of the above
 

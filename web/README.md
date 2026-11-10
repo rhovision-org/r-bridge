@@ -78,6 +78,20 @@ npm --prefix web run test
 npm --prefix web run build
 ```
 
+## Browser tests
+
+```bash
+npm --prefix web exec -- playwright install chromium   # once
+make web-e2e                                          # or npm --prefix web run test:e2e
+```
+
+Playwright starts its own Anvil on `:8546`, deploys the vault and mock USDT with
+`forge`, mints 2 USDT to Anvil account 0, serves the app on `:4173`, and injects a
+MetaMask-shaped EIP-1193 provider backed by that account. The specs cover the ETH lock,
+the USDT approve+lock, the client-side cap refusal and keystore create/download. They do
+not need the rholo devnet because they stop before mint/burn. Requires Foundry; the CI
+`e2e` job installs Chromium and runs it.
+
 Live reads are opt-in:
 
 ```bash

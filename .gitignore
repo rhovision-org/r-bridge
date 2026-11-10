@@ -4,6 +4,9 @@
 *.pyc
 web/dist
 web/src/wasm/pkg/
+web/e2e/.state.json
+web/test-results/
+web/playwright-report/
 docs/book
 contracts/evm/out/
 contracts/evm/cache/

@@ -295,7 +295,11 @@ export async function lockEth(options: {
     chain: anvilChain(options.rpc),
     transport: custom(window.ethereum as EIP1193Provider),
   });
-  return wallet.writeContract({
+  const publicClient = createPublicClient({
+    chain: anvilChain(options.rpc),
+    transport: http(options.rpc),
+  });
+  const hash = await wallet.writeContract({
     address: options.vault,
     abi: VAULT_ABI,
     functionName: "lock",
@@ -303,6 +307,11 @@ export async function lockEth(options: {
     value,
     account: options.account,
   });
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") {
+    throw new Error(`The lock transaction reverted: ${hash}`);
+  }
+  return hash;
 }
 
 export interface Erc20LockResult {
@@ -377,6 +386,10 @@ export async function lockErc20(options: {
     args: [options.token, value, options.rholoRecipient, BigInt(options.nonce)],
     account: options.account,
   });
+  const receipt = await publicClient.waitForTransactionReceipt({ hash: lock });
+  if (receipt.status !== "success") {
+    throw new Error(`The lock transaction reverted: ${lock}`);
+  }
   return { approve, lock };
 }
 

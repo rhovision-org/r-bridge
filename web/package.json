@@ -14,7 +14,8 @@
     "pretest": "node scripts/build-wasm.mjs",
     "test": "vitest run",
     "wasm:build": "node scripts/build-wasm.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -23,6 +24,7 @@
     "viem": "^2.57.17"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^26.6.6",
