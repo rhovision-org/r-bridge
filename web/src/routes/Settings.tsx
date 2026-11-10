@@ -1,9 +1,51 @@
 import { useState } from "react";
 import { loadConfig, saveConfig, type AppConfig } from "../lib/config";
+import { createKeystore } from "../lib/keystore";
 
 export default function Settings() {
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());
   const [saved, setSaved] = useState(false);
+  const [ksPassword, setKsPassword] = useState("");
+  const [ksConfirm, setKsConfirm] = useState("");
+  const [ksBusy, setKsBusy] = useState(false);
+  const [ksError, setKsError] = useState<string | null>(null);
+  const [created, setCreated] = useState<{
+    revAddress: string;
+    ethAddress: string;
+    filename: string;
+  } | null>(null);
+
+  async function createAccount() {
+    setKsError(null);
+    setCreated(null);
+    if (ksPassword !== ksConfirm) {
+      setKsError("Passwords do not match.");
+      return;
+    }
+    setKsBusy(true);
+    try {
+      const result = await createKeystore(ksPassword);
+      const url = URL.createObjectURL(
+        new Blob([result.json], { type: "application/json" }),
+      );
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = result.filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setCreated({
+        revAddress: result.revAddress,
+        ethAddress: result.ethAddress,
+        filename: result.filename,
+      });
+      setKsPassword("");
+      setKsConfirm("");
+    } catch (caught) {
+      setKsError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setKsBusy(false);
+    }
+  }
 
   function set(key: keyof AppConfig, value: string) {
     setConfig((current) => ({ ...current, [key]: value }));
@@ -78,6 +120,47 @@ export default function Settings() {
           Save
         </button>
         {saved ? <p className="hint">Saved. Reload the page to re-read the portfolio.</p> : null}
+      </section>
+
+      <section className="card form">
+        <h2>Create a rholo keystore</h2>
+        <p className="muted">
+          A Web3 v3 keystore (scrypt + AES-128-CTR) for a new rholo account. The same
+          file opens in r-wallet. It encrypts the key; the password is never stored and
+          cannot be recovered, so back up both.
+        </p>
+        <div className="row">
+          <label htmlFor="ks-password">Password</label>
+          <input
+            id="ks-password"
+            type="password"
+            value={ksPassword}
+            onChange={(event) => setKsPassword(event.target.value)}
+          />
+        </div>
+        <div className="row">
+          <label htmlFor="ks-confirm">Confirm</label>
+          <input
+            id="ks-confirm"
+            type="password"
+            value={ksConfirm}
+            onChange={(event) => setKsConfirm(event.target.value)}
+          />
+        </div>
+        <button type="button" onClick={createAccount} disabled={ksBusy || !ksPassword}>
+          {ksBusy ? "Encrypting…" : "Create and download"}
+        </button>
+        {ksError ? <p className="error">{ksError}</p> : null}
+        {created ? (
+          <div>
+            <p className="hint">
+              Downloaded <span className="mono">{created.filename}</span>. Fund this
+              account with REV before it can submit deploys.
+            </p>
+            <p className="mono">REV {created.revAddress}</p>
+            <p className="mono">ETH {created.ethAddress}</p>
+          </div>
+        ) : null}
       </section>
 
       <section className="card">

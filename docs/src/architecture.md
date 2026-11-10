@@ -25,8 +25,9 @@ signature is not something those wallets can produce.
 | `rbridge-chain` | `crates/rbridge-chain` | rholo node seam over the pinned r-cash client |
 | `rbridge-sdk` | `crates/rbridge-sdk` | portfolio and flow types, relayer API trait, connected client |
 | `rbridge-cli` | `crates/rbridge-cli` | node status, registry, digest |
-| `rbridge-wasm` | `crates/rbridge-wasm` | rholo key, REV address, digest signing, scaling for the web app |
-| web | `web/` | live rholo/vault reads, portfolio, MetaMask ETH/USDT locks (approve + lock), WASM-signed rholo burn |
+| `rbridge-keystore` | `crates/rbridge-keystore` | Web3 v3 keystore create/unlock (scrypt, PBKDF2, AES-128-CTR, keccak MAC), r-wallet compatible |
+| `rbridge-wasm` | `crates/rbridge-wasm` | rholo key, REV address, digest signing, keystore facade, scaling for the web app |
+| web | `web/` | live rholo/vault reads, portfolio, MetaMask ETH/USDT locks (approve + lock), keystore import/create, WASM-signed rholo burn |
 | rholo contracts | `contracts/rholo` | Phase 1 demo: one Bridge contract + Guard/Ledger libs; the split suite is the production target |
 | native contracts | `contracts/{evm,tron,agoric}` | Ethereum/TVM vault tested; Agoric Zoe escrow/release vat tested at the contract level |
 | relayer implementation | external (rail undecided) | watchers, attestation signers, mint/unlock submission |
@@ -36,9 +37,10 @@ signature is not something those wallets can produce.
 
 - **Native account**: owned by the wallet. The dApp requests signatures; it never sees
   the key.
-- **rholo account**: a secp256k1 key in the WASM module, stored as an encrypted Web3 v3
-  keystore in IndexedDB. It signs rholo deploys and pays phlo. It is portable to/from
-  r-wallet and the r-gen/r-cash clients.
+- **rholo account**: a secp256k1 key in the WASM module, supplied as an encrypted Web3
+  v3 keystore file. The browser decrypts it in WASM and keeps the key in memory for the
+  operation; the demo does not persist it between sessions yet. It signs rholo deploys
+  and pays phlo. The file is portable to/from r-wallet and the r-gen/r-cash clients.
 - **Relayer key**: owned by the node add-on; signs the 32-byte attestation digest. It is
   not the validator key and not the deploy key.
 

@@ -22,7 +22,9 @@ r-bridge uses what the user already has:
 - **Keplr** for Cosmos/Agoric accounts and Zoe/IBC offers.
 - **r-bridge's own WASM keystore** only for the rholo account, because MetaMask cannot
   sign the node's deploy preimage (BLAKE2b-256 protobuf, `shardId` field 11,
-  `{prehash:false}`).
+  `{prehash:false}`). It is a Web3 v3 file (scrypt + AES-128-CTR) that opens in
+  r-wallet; the browser decrypts it in WASM and keeps the key in memory for the
+  operation.
 
 ## Infrastructure decision pending — demo first
 
@@ -143,12 +145,14 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
   completes; failed deposits are journaled and `make refund-failed` returns the native
   funds via the admin refund.
 - Web demo: live rholo bridge/vault reads, MetaMask ETH and USDT locks (approve +
-  lock), and a WASM-signed rholo burn for withdraw; 13 unit + 4 opt-in live tests pass,
-  and a Node smoke test signs and submits a burn through the wasm client.
+  lock), a WASM-signed rholo burn for withdraw, and rholo keystore import/create
+  (Web3 v3, r-wallet compatible); 19 unit + 5 opt-in live tests pass, and a Node smoke
+  test signs and submits a burn through the wasm client.
 - Agoric vat: Zoe escrow/release contract passes deposit, 2-of-3 release, replay,
   below-threshold and wrong-digest tests. No live Agoric chain/IBC or Agoric watcher yet.
 - Not yet: Sepolia/Nile deployment, live Agoric/IBC, reorg handling, multi-validator
-  finality, production relayer, TronLink/Keplr writes, production web keystore.
+  finality, production relayer, TronLink/Keplr writes, keystore session persistence in
+  the browser.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its
@@ -159,6 +163,7 @@ gate; testnet/production must additionally require finality.
 - `spec/attestation.md` — the cross-chain message and signature format.
 - `spec/assets.md` — the initial asset registry and amount scaling.
 - `spec/invariants.md` — conservation, idempotency, auth and finality rules.
+- `spec/keystore.md` — the Web3 v3 rholo keystore format, interop and import limits.
 - `spec/relayer-interface.md` — the boundary between r-bridge and the node add-on.
 - `docs/src/architecture.md`, `docs/src/flows.md`, `docs/src/roadmap.md`.
 

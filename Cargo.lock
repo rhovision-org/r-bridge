@@ -1343,6 +1343,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rbridge-keystore"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "ctr",
+ "getrandom 0.4.3",
+ "k256",
+ "pbkdf2",
+ "rbridge-core",
+ "scrypt",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "zeroize",
+]
+
+[[package]]
 name = "rbridge-sdk"
 version = "0.1.0"
 dependencies = [
@@ -1361,6 +1378,7 @@ dependencies = [
  "js-sys",
  "rbridge-chain",
  "rbridge-core",
+ "rbridge-keystore",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",

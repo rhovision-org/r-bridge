@@ -1,0 +1,24 @@
+[package]
+name = "rbridge-keystore"
+description = "Web3 Secret Storage v3 keystore for rholo keys, compatible with r-wallet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rbridge-core = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+k256 = { workspace = true }
+zeroize = { workspace = true }
+getrandom = { workspace = true }
+scrypt = { version = "0.12", default-features = false }
+aes = "0.9"
+ctr = "0.10"
+pbkdf2 = "0.13"
+sha2 = { version = "0.11", default-features = false }

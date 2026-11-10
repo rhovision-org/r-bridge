@@ -77,6 +77,30 @@ pub fn scale_native_to_rholo(
     Ok(amount.value().to_string())
 }
 
+/// Encrypt a 32-byte secret into a Web3 v3 keystore (r-wallet compatible).
+#[wasm_bindgen]
+pub fn keystore_create(secret_hex: &str, password: &str) -> Result<String, JsValue> {
+    let hex = secret_hex.trim();
+    let hex = hex
+        .strip_prefix("0x")
+        .or_else(|| hex.strip_prefix("0X"))
+        .unwrap_or(hex);
+    let bytes = from_hex(hex).map_err(js_error)?;
+    let secret: [u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| js_error("secret must be 32 bytes"))?;
+    rbridge_keystore::create(&secret, password).map_err(js_error)
+}
+
+/// Decrypt a Web3 v3 keystore and return the secret as lowercase hex. The caller keeps
+/// it in memory only; it is never written anywhere by this crate.
+#[wasm_bindgen]
+pub fn keystore_unlock(json: &str, password: &str) -> Result<String, JsValue> {
+    let secret = rbridge_keystore::unlock(json, password).map_err(js_error)?;
+    Ok(to_hex(&secret))
+}
+
 /// The rholo key. The secret never leaves this object; the JS side gets the public key,
 /// the REV address and signatures only.
 #[wasm_bindgen]

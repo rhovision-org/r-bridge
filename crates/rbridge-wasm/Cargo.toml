@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 rbridge-core = { workspace = true }
+rbridge-keystore = { workspace = true }
 rbridge-chain = { workspace = true, default-features = false, features = ["wasm"] }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }

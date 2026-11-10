@@ -4,6 +4,7 @@ import { RELAYER_ISSUE } from "../App";
 import { ASSETS, CHAIN_LABEL, type Chain } from "../lib/assets";
 import { loadConfig } from "../lib/config";
 import { lockErc20, lockEth } from "../lib/evm";
+import { keystoreAddress, unlockKeystore } from "../lib/keystore";
 import { bridgeDeployTerm, burnCall } from "../lib/rholo";
 import { connectMetaMask } from "../lib/wallets";
 
@@ -23,6 +24,9 @@ export default function Bridge() {
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState(config.rholoAddress);
   const [rholoSecret, setRholoSecret] = useState("");
+  const [keystoreJson, setKeystoreJson] = useState("");
+  const [keystorePassword, setKeystorePassword] = useState("");
+  const [keystoreAccount, setKeystoreAccount] = useState<string | null>(null);
   const [account, setAccount] = useState<Address | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +67,7 @@ export default function Bridge() {
     direction === "withdraw" &&
     supported &&
     Boolean(config.bridgeUri) &&
-    Boolean(rholoSecret) &&
+    (Boolean(keystoreJson) ? Boolean(keystorePassword) : Boolean(rholoSecret)) &&
     Number(amount) > 0 &&
     /^0x[0-9a-fA-F]{40}$/.test(recipient);
 
@@ -132,6 +136,27 @@ export default function Bridge() {
     }
   }
 
+  async function loadKeystore(file: File | undefined) {
+    setError(null);
+    setKeystoreAccount(null);
+    if (!file) {
+      setKeystoreJson("");
+      return;
+    }
+    if (file.size > 32 * 1024) {
+      setError("That file is too large to be a keystore.");
+      return;
+    }
+    try {
+      const text = await file.text();
+      setKeystoreAccount(keystoreAddress(text));
+      setKeystoreJson(text);
+    } catch (caught) {
+      setKeystoreJson("");
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   async function burn() {
     setError(null);
     setWithdrawal(null);
@@ -139,8 +164,8 @@ export default function Bridge() {
       setError("Set the bridge URI in Settings first.");
       return;
     }
-    if (!rholoSecret) {
-      setError("Enter the devnet rholo signer secret.");
+    if (!keystoreJson && !rholoSecret) {
+      setError("Choose a keystore file or paste the devnet signer secret.");
       return;
     }
     if (!/^0x[0-9a-fA-F]{40}$/.test(recipient)) {
@@ -149,9 +174,24 @@ export default function Bridge() {
     }
     setBusy(true);
     try {
+      let secret = rholoSecret;
+      if (keystoreJson) {
+        try {
+          secret = (await unlockKeystore(keystoreJson, keystorePassword)).secretHex;
+        } catch (caught) {
+          setError(
+            `Could not unlock the keystore: ${caught instanceof Error ? caught.message : String(caught)}`,
+          );
+          return;
+        }
+      }
+      if (!secret) {
+        setError("Choose a keystore file or paste the devnet signer secret.");
+        return;
+      }
       const { initWasm, RholoClient, RholoKey } = await import("../wasm");
       await initWasm();
-      const key = new RholoKey(rholoSecret);
+      const key = new RholoKey(secret);
       const signerAddress = key.rev_address();
       if (config.rholoAddress && signerAddress !== config.rholoAddress) {
         setError(
@@ -164,7 +204,7 @@ export default function Bridge() {
       const call = burnCall(`${chain}.${asset?.id}`, amountRholo, "ethereum", recipient, withdrawalId);
       const term = bridgeDeployTerm(config.bridgeUri, call);
       const client = new RholoClient(config.node);
-      const deployId = await client.deploy(term, rholoSecret, 8_000_000n);
+      const deployId = await client.deploy(term, secret, 8_000_000n);
       setWithdrawal({ id: withdrawalId, state: "submitted", result: deployId });
       for (let attempt = 0; attempt < 30; attempt += 1) {
         const status = JSON.parse(await client.deploy_status(deployId)) as {
@@ -273,7 +313,30 @@ export default function Bridge() {
         {direction === "withdraw" ? (
           <>
             <div className="row">
-              <label htmlFor="secret">rholo signer (dev)</label>
+              <label htmlFor="keystore">rholo keystore</label>
+              <input
+                id="keystore"
+                type="file"
+                accept="application/json,.json"
+                onChange={(event) => loadKeystore(event.target.files?.[0])}
+              />
+            </div>
+            {keystoreAccount ? <p className="mono hint">{keystoreAccount}</p> : null}
+            <div className="row">
+              <label htmlFor="keystore-password">Keystore password</label>
+              <input
+                id="keystore-password"
+                type="password"
+                value={keystorePassword}
+                onChange={(event) => setKeystorePassword(event.target.value)}
+              />
+            </div>
+            <p className="hint">
+              Unlocked in the browser by the WASM keystore (Web3 v3, the same file
+              r-wallet uses). The decrypted key is held only for this burn.
+            </p>
+            <div className="row">
+              <label htmlFor="secret">or dev secret</label>
               <input
                 id="secret"
                 type="password"
@@ -283,8 +346,9 @@ export default function Bridge() {
               />
             </div>
             <p className="hint">
-              Devnet only. The signer must hold the wrapped ETH and REV for phlo. It is
-              kept in memory for this session and never persisted.
+              Devnet only. The signer must hold the wrapped token and REV for phlo. It is
+              kept in memory for this session and never persisted. A keystore file takes
+              precedence when both are provided.
             </p>
           </>
         ) : null}

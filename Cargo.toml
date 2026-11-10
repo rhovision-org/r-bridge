@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/rbridge-core",
+  "crates/rbridge-keystore",
   "crates/rbridge-chain",
   "crates/rbridge-sdk",
   "crates/rbridge-cli",
@@ -9,6 +10,7 @@ members = [
 ]
 default-members = [
   "crates/rbridge-core",
+  "crates/rbridge-keystore",
   "crates/rbridge-chain",
   "crates/rbridge-sdk",
   "crates/rbridge-cli",
@@ -34,6 +36,7 @@ unimplemented = "deny"
 
 [workspace.dependencies]
 rbridge-core = { path = "crates/rbridge-core" }
+rbridge-keystore = { path = "crates/rbridge-keystore" }
 rbridge-chain = { path = "crates/rbridge-chain", default-features = false }
 rbridge-sdk = { path = "crates/rbridge-sdk", default-features = false }
 

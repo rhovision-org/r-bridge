@@ -42,7 +42,9 @@ user            dApp (WASM key)        rholo Bridge          relayer           v
  │  done          │◄───────────────────────│                    │                 │
 ```
 
-1. The user signs a `burn` deploy with the rholo key; the app records the op id.
+1. The user unlocks their Web3 v3 rholo keystore in WASM (or supplies the devnet secret)
+   and signs a `burn` deploy; the app records the op id. The decrypted key is held in
+   memory for the operation only.
 2. After finality, relayers sign the unlock digest (direction `withdraw`, recipient =
    native address) and broadcast the native transaction.
 3. The vault/vat releases `amount - withdrawFee`, marks the withdrawal id used, and the
