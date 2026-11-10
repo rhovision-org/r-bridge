@@ -61,6 +61,7 @@ make demo                     # Phase 1 end-to-end demo (devnet only)
 make mock-relayer             # dev-only HTTP relayer surface on :8099
 make relayer-watch            # dev watcher loop (Anvil -> rholo, rholo -> Anvil)
 make refund-failed            # 2-of-3 admin refund of failed deposits
+make reorg-demo               # safe-head/reorg journal test on its own Anvil
 ```
 
 ## Status labels

@@ -117,8 +117,11 @@ make relayer-watch         # watches Anvil deposits and rholo withdrawals
 ```
 
 The watcher starts at the current Anvil block and ignores withdrawals that were already
-pending when it started, so it only settles new work. It is a dev loop (fixed keys, no
-reorg handling, ETH-only, no bond/slashing); the production rail is still undecided.
+pending when it started, so it only settles new work. It only settles below a safe head
+(`--confirmations N`, or `--finalized` to follow the finalized tag) and journals block
+hashes: a reorg rolls the cursor back, and a reorg that removes a settled deposit halts
+it for reconciliation. `make reorg-demo` proves both paths on Anvil. It is still a dev
+loop (fixed keys, ETH-only, no bond/slashing); the production rail is undecided.
 
 ## Run the web demo
 
@@ -146,7 +149,8 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
   ERC-20 USDT ↔ rholo e2e PASS on Anvil + local devnet.
 - Dev relayer loop: PASS — deposit watcher mints, withdrawal watcher unlocks and
   completes; failed deposits are journaled and `make refund-failed` returns the native
-  funds via the admin refund.
+  funds via the admin refund. The safe-head gate and reorg journal pass
+  `make reorg-demo`: an unprocessed rollback rewinds, a reorged settled deposit halts.
 - Web demo: live rholo bridge/vault reads, MetaMask ETH and USDT locks (approve +
   lock), a WASM-signed rholo burn for withdraw, and rholo keystore create/import/load
   (Web3 v3, r-wallet compatible; save to device or keep an encrypted copy in the
@@ -155,9 +159,8 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
   wasm client.
 - Agoric vat: Zoe escrow/release contract passes deposit, 2-of-3 release, replay,
   below-threshold and wrong-digest tests. No live Agoric chain/IBC or Agoric watcher yet.
-- Not yet: Sepolia/Nile deployment, live Agoric/IBC, reorg handling, multi-validator
-  finality, production relayer, TronLink/Keplr writes, a MetaMask Snap for direct rholo
-  signing.
+- Not yet: Sepolia/Nile deployment, live Agoric/IBC, multi-validator/testnet finality,
+  production relayer, TronLink/Keplr writes, a MetaMask Snap for direct rholo signing.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its

@@ -2,12 +2,16 @@
 """Dev relayer loop: watch Anvil deposits and rholo withdrawals, then settle.
 
 This is the rail-agnostic demo of what a production relayer must do. It is NOT the
-production add-on: fixed dev keys, no reorg handling, no bond/slashing, no metrics.
-The point is to make the watcher/attester/submitter contract concrete while the rail
-(standalone bridge node vs rholo plugin/sidecar) is still undecided.
+production add-on: fixed dev keys, no bond/slashing, no metrics. It does implement the
+safety shape: a finality/confirmation gate, a reorg-aware journal and a fail-closed halt
+when a settled deposit is reorged out.
 
-  Anvil Deposit  -> sign 2-of-3 deposit digest -> Bridge.mint on rholo
+  Anvil Deposit  -> wait for the safe head -> sign 2-of-3 digest -> Bridge.mint on rholo
   rholo pending  -> sign 2-of-3 withdrawal digest (65-byte) -> vault.unlock -> complete
+
+Options: `--confirmations N` (default 0 for the dev loop), `--finalized` to follow the
+chain's finalized tag, `--dry-run` to scan/journal without rholo calls, `--once` for a
+single scan, `--state-file` for an isolated journal.
 
 Start it before locking; it only scans new Anvil blocks.
 """
@@ -20,6 +24,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,6 +42,25 @@ sys.path.insert(0, str(ROOT / "harness"))
 import demo  # noqa: E402
 
 
+def rpc(method: str, params: list | None = None):
+    """Raw JSON-RPC against Anvil, for block hashes and finality."""
+    payload = json.dumps(
+        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
+    ).encode()
+    request = urllib.request.Request(
+        ANVIL_RPC, data=payload, headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        body = json.load(response)
+    if "error" in body:
+        raise RuntimeError(body["error"])
+    return body.get("result")
+
+
+def block_at(number: int) -> dict | None:
+    return rpc("eth_getBlockByNumber", [hex(number), False])
+
+
 def cast(*args: str) -> str:
     result = subprocess.run([str(CAST), *args], capture_output=True, text=True)
     if result.returncode != 0:
@@ -50,10 +74,6 @@ def cast_json(*args: str) -> dict:
 
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text())
-
-
-def save_state(state: dict) -> None:
-    STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
 def deposit_topic() -> str:
@@ -95,49 +115,176 @@ def decode_deposit(log: dict) -> dict:
         "recipient": recipient,
         "nonce": nonce,
         "block": int(log["blockNumber"], 16),
+        "block_hash": log.get("blockHash", ""),
         "tx": log["transactionHash"],
     }
 
 
 class Relayer:
-    def __init__(self, keys: dict, bridge: dict, vault: str, interval: float, from_block: int | None):
+    def __init__(
+        self,
+        keys: dict,
+        bridge: dict,
+        vault: str,
+        interval: float,
+        from_block: int | None,
+        state_path: Path = STATE_FILE,
+        dry_run: bool = False,
+        confirmations: int = 0,
+        finalized: bool = False,
+        reorg_window: int = 128,
+    ):
         self.keys = keys
         self.bridge = bridge
         self.vault = vault
         self.interval = interval
+        self.state_path = state_path
+        self.dry_run = dry_run
+        self.confirmations = max(0, confirmations)
+        self.finalized = finalized
+        self.reorg_window = max(1, reorg_window)
         self.deployer = keys["deployer"]
         self.relayer_secrets = [self.deployer["secret"], keys["relayers"][0]["secret"]]
         demo.DEPLOY_SECRET = self.deployer["secret"]
-        evm = load_json(EVM_FILE)
+        evm = load_json(EVM_FILE) if EVM_FILE.exists() else {}
         self.token_for = evm.get("asset_keys", {"ethereum.eth": ZERO})
         self.topic = deposit_topic()
-        if STATE_FILE.exists():
-            self.state = load_json(STATE_FILE)
+        if state_path.exists():
+            self.state = load_json(state_path)
         else:
-            latest = int(cast("block-number", "--rpc-url", ANVIL_RPC))
-            self.state = {"last_block": latest, "deposits": [], "withdrawals": []}
-            save_state(self.state)
+            self.state = {}
         if from_block is not None:
             self.state["last_block"] = from_block
+        self.state.setdefault(
+            "last_block", int(cast("block-number", "--rpc-url", ANVIL_RPC))
+        )
+        self.state.setdefault("deposits", [])
+        self.state.setdefault("withdrawals", [])
+        self.state.setdefault("deposit_blocks", {})
+        self.state.setdefault("block_hashes", {})
+        self.state.setdefault("reorgs", [])
+        self.state.setdefault("failed_deposits", {})
+        self.state.setdefault("halted", None)
+        self.save()
         # Only settle withdrawals created after this watcher starts. Historical pending
         # records (for example from an earlier Anvil instance) are not ours to release.
         self.ignored_withdrawals: set[str] = set()
-        try:
-            pending = demo.call_read(
-                self.bridge["uri"], 'Bridge!("pendingWithdrawals", *ret)', "relayer_snapshot.rho"
-            )
-            if pending and pending[0] is True:
-                self.ignored_withdrawals = set(pending[1])
-        except Exception as error:  # noqa: BLE001 - dev loop
-            print(f"snapshot warning: {error}")
+        if not self.dry_run:
+            try:
+                pending = demo.call_read(
+                    self.bridge["uri"],
+                    'Bridge!("pendingWithdrawals", *ret)',
+                    "relayer_snapshot.rho",
+                )
+                if pending and pending[0] is True:
+                    self.ignored_withdrawals = set(pending[1])
+            except Exception as error:  # noqa: BLE001 - dev loop
+                print(f"snapshot warning: {error}")
         # The bridge was installed with these assets; read the config per token lazily.
         self.assets: dict[str, dict] = {}
         self.rholo_assets: dict[str, dict] = {}
 
-    def scan_deposits(self) -> None:
+    def save(self) -> None:
+        self.state_path.write_text(json.dumps(self.state, indent=2))
+
+    def safe_head(self) -> int:
+        """The highest block whose effects may be settled.
+
+        `--finalized` follows the chain's finalized tag (the production rule);
+        otherwise the dev default is `latest - confirmations`.
+        """
         latest = int(cast("block-number", "--rpc-url", ANVIL_RPC))
+        if self.finalized:
+            block = rpc("eth_getBlockByNumber", ["finalized", False])
+            if block:
+                return int(block["number"], 16)
+            print("finalized block unavailable; falling back to confirmations")
+        return max(0, latest - self.confirmations)
+
+    def check_reorg(self) -> bool:
+        """Detect a reorg at or below the processed tip.
+
+        Returns False when a processed deposit moved; the caller halts. Otherwise the
+        cursor rolls back to the common ancestor and the unprocessed range is rescanned.
+        """
+        last = self.state["last_block"]
+        if last <= 0:
+            return True
+        stored = self.state["block_hashes"].get(str(last))
+        if not stored:
+            block = block_at(last)
+            if block:
+                self.state["block_hashes"][str(last)] = block["hash"]
+                self.save()
+            return True
+        current = block_at(last)
+        if current and current["hash"] == stored:
+            return True
+
+        ancestor = None
+        floor = max(1, last - self.reorg_window)
+        for number in range(last - 1, floor - 1, -1):
+            known = self.state["block_hashes"].get(str(number))
+            if not known:
+                continue
+            candidate = block_at(number)
+            if candidate and candidate["hash"] == known:
+                ancestor = number
+                break
+        if ancestor is None:
+            ancestor = max(0, last - self.reorg_window)
+
+        affected = sorted(
+            deposit_id
+            for deposit_id, record in self.state["deposit_blocks"].items()
+            if int(record.get("block", 0)) > ancestor
+        )
+        dropped_failures = sorted(
+            deposit_id
+            for deposit_id, record in self.state["failed_deposits"].items()
+            if int(record.get("block", 0)) > ancestor
+        )
+        self.state["reorgs"].append(
+            {
+                "detected_at": int(time.time()),
+                "previous_tip": last,
+                "ancestor": ancestor,
+                "deposits": affected,
+                "failed_deposits": dropped_failures,
+            }
+        )
+        if affected:
+            self.state["halted"] = {
+                "reason": "processed deposits were reorged out; reconcile before continuing",
+                "at": int(time.time()),
+                "deposits": affected,
+            }
+            self.save()
+            print(f"REORG: processed deposits {affected} reorged out; HALTED")
+            return False
+
+        for deposit_id in dropped_failures:
+            self.state["failed_deposits"].pop(deposit_id, None)
+        self.state["last_block"] = ancestor
+        self.state["block_hashes"] = {
+            key: value
+            for key, value in self.state["block_hashes"].items()
+            if int(key) <= ancestor
+        }
+        self.save()
+        print(f"REORG: rolled back to block {ancestor}; the range will be rescanned")
+        return True
+
+    def scan_deposits(self) -> None:
+        if self.state["halted"]:
+            return
+        safe = self.safe_head()
+        if safe <= 0:
+            return
+        if not self.check_reorg():
+            return
         start = self.state["last_block"] + 1
-        if latest < start:
+        if start > safe:
             return
         out = cast(
             "logs",
@@ -146,7 +293,7 @@ class Relayer:
             "--from-block",
             str(start),
             "--to-block",
-            str(latest),
+            str(safe),
             "--json",
             "--rpc-url",
             ANVIL_RPC,
@@ -159,8 +306,18 @@ class Relayer:
             if deposit["deposit_id"] in self.state["deposits"]:
                 continue
             self.settle_deposit(deposit)
-        self.state["last_block"] = latest
-        save_state(self.state)
+        for number in range(max(start, safe - self.reorg_window + 1), safe + 1):
+            block = block_at(number)
+            if block:
+                self.state["block_hashes"][str(number)] = block["hash"]
+        self.state["last_block"] = safe
+        floor = safe - self.reorg_window
+        self.state["block_hashes"] = {
+            key: value
+            for key, value in self.state["block_hashes"].items()
+            if int(key) > floor
+        }
+        self.save()
 
     def settle_deposit(self, deposit: dict) -> None:
         token = deposit["token"]
@@ -171,11 +328,17 @@ class Relayer:
         amount_native = deposit["amount_native"]
         if amount_native % scale != 0:
             print(f"skip deposit {deposit['deposit_id']}: not a scale multiple")
-            self.state["deposits"].append(deposit["deposit_id"])
-            save_state(self.state)
+            self.mark_deposit(deposit)
             return
         amount_rholo = amount_native // scale
         chain, asset_id = config["asset_key"].split(".", 1)
+        if self.dry_run:
+            print(
+                f"dry-run: would mint {amount_rholo} {config['asset_key']} "
+                f"for deposit {deposit['deposit_id']} (block {deposit['block']})"
+            )
+            self.mark_deposit(deposit)
+            return
         if config["asset_key"] not in self.rholo_assets:
             record = demo.call_read(
                 self.bridge["uri"],
@@ -211,13 +374,26 @@ class Relayer:
         )
         print(f"deposit {deposit['deposit_id']} -> mint {result!r}")
         if result and result[0] is True:
-            self.state["deposits"].append(deposit["deposit_id"])
-            save_state(self.state)
+            self.mark_deposit(deposit)
         elif result == (False, "replay"):
-            self.state["deposits"].append(deposit["deposit_id"])
-            save_state(self.state)
+            self.mark_deposit(deposit)
         else:
             self.record_failure(deposit, repr(result))
+
+    def mark_deposit(self, deposit: dict) -> None:
+        """Record a settled deposit with its block, so a later reorg can be detected."""
+        deposit_id = deposit["deposit_id"]
+        if deposit_id not in self.state["deposits"]:
+            self.state["deposits"].append(deposit_id)
+        self.state["deposit_blocks"][deposit_id] = {
+            "block": deposit["block"],
+            "block_hash": deposit.get("block_hash", ""),
+            "tx": deposit["tx"],
+            "amount_native": deposit.get("amount_native"),
+            "token": deposit.get("token"),
+            "dry_run": self.dry_run,
+        }
+        self.save()
 
     def record_failure(self, deposit: dict, reason: str) -> None:
         failed = self.state.setdefault("failed_deposits", {})
@@ -227,15 +403,19 @@ class Relayer:
             "token": deposit["token"],
             "sender": deposit["sender"],
             "tx": deposit["tx"],
+            "block": deposit["block"],
+            "block_hash": deposit.get("block_hash", ""),
             "recorded_at": int(time.time()),
         }
-        save_state(self.state)
+        self.save()
         print(
             f"FAILED deposit {deposit['deposit_id']}: {reason}; "
             "native funds are locked and need a refund path"
         )
 
     def scan_withdrawals(self) -> None:
+        if self.state["halted"] or self.dry_run:
+            return
         pending = demo.call_read(
             self.bridge["uri"], 'Bridge!("pendingWithdrawals", *ret)', "relayer_pending.rho"
         )
@@ -263,7 +443,7 @@ class Relayer:
                 # The dev watcher only settles the Anvil ETH asset and well-formed
                 # 20-byte destinations; other pending records are left to their rail.
                 self.state["withdrawals"].append(withdrawal_id)
-                save_state(self.state)
+                self.save()
                 continue
             self.settle_withdrawal(withdrawal_id, withdrawal)
 
@@ -310,12 +490,25 @@ class Relayer:
         print(f"withdrawal {withdrawal_id} -> unlock {native_tx} complete {complete!r}")
         if complete and complete[0] is True:
             self.state["withdrawals"].append(withdrawal_id)
-            save_state(self.state)
+            self.save()
+
+    def halted_reason(self) -> str | None:
+        halted = self.state.get("halted")
+        return halted.get("reason") if halted else None
 
     def run(self) -> None:
-        print(f"dev relayer: vault={self.vault} bridge={self.bridge['uri']}")
-        print(f"             start block={self.state['last_block']} interval={self.interval}s")
+        print(f"dev relayer: vault={self.vault} bridge={self.bridge['uri'] or '(dry-run)'}")
+        print(
+            f"             start block={self.state['last_block']} interval={self.interval}s "
+            f"confirmations={self.confirmations} finalized={self.finalized} "
+            f"dry-run={self.dry_run}"
+        )
         while True:
+            reason = self.halted_reason()
+            if reason:
+                print(f"relayer halted: {reason}")
+                print("reconcile, then rerun with --reset-state after fixing the cause")
+                return
             try:
                 self.scan_deposits()
                 self.scan_withdrawals()
@@ -328,16 +521,56 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--interval", type=float, default=5.0)
     ap.add_argument("--from-block", type=int, default=None)
+    ap.add_argument("--state-file", type=Path, default=STATE_FILE)
+    ap.add_argument("--vault", help="vault address (defaults to .devnet/evm.json)")
+    ap.add_argument("--confirmations", type=int, default=0)
+    ap.add_argument("--finalized", action="store_true")
+    ap.add_argument("--reorg-window", type=int, default=128)
+    ap.add_argument("--dry-run", action="store_true", help="scan and journal, do not mint/unlock")
+    ap.add_argument("--once", action="store_true", help="scan once and exit")
+    ap.add_argument("--reset-state", action="store_true")
     args = ap.parse_args()
 
-    for path in (KEYS_FILE, BRIDGE_FILE, EVM_FILE):
-        if not path.exists():
-            print(f"missing {path}; run `make devnet-up && make demo && make e2e-evm` first")
+    if args.reset_state and args.state_file.exists():
+        args.state_file.unlink()
+        print(f"removed {args.state_file}")
+
+    if args.dry_run:
+        keys = {"deployer": {"secret": "00" * 32}, "relayers": [{"secret": "00" * 32}]}
+        bridge = {"network": "dry-run", "bridge_id": "dry-run", "uri": ""}
+        vault = args.vault
+        if not vault:
+            print("--dry-run needs --vault")
             return 2
-    keys = load_json(KEYS_FILE)
-    bridge = load_json(BRIDGE_FILE)
-    vault = load_json(EVM_FILE)["vault"]
-    Relayer(keys, bridge, vault, args.interval, args.from_block).run()
+    else:
+        for path in (KEYS_FILE, BRIDGE_FILE, EVM_FILE):
+            if not path.exists():
+                print(f"missing {path}; run `make devnet-up && make demo && make e2e-evm` first")
+                return 2
+        keys = load_json(KEYS_FILE)
+        bridge = load_json(BRIDGE_FILE)
+        vault = args.vault or load_json(EVM_FILE)["vault"]
+
+    relayer = Relayer(
+        keys,
+        bridge,
+        vault,
+        args.interval,
+        args.from_block,
+        state_path=args.state_file,
+        dry_run=args.dry_run,
+        confirmations=args.confirmations,
+        finalized=args.finalized,
+        reorg_window=args.reorg_window,
+    )
+    if args.once:
+        relayer.scan_deposits()
+        relayer.scan_withdrawals()
+        reason = relayer.halted_reason()
+        if reason:
+            print(f"relayer halted: {reason}")
+        return 0
+    relayer.run()
     return 0
 
 

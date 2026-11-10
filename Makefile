@@ -4,7 +4,7 @@ RHOLO_DIR ?= ../RNodeRust
 NODE ?= http://localhost:40403
 FORGE ?= $(HOME)/.foundry/bin/forge
 
-.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build agoric-install agoric-test web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer e2e-evm relayer-watch refund-failed
+.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build agoric-install agoric-test web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer e2e-evm relayer-watch refund-failed reorg-demo
 
 fmt:
 	cargo fmt --all --check
@@ -79,6 +79,9 @@ relayer-watch:
 
 refund-failed:
 	$(PY) harness/evm_refund.py
+
+reorg-demo:
+	$(PY) harness/reorg_demo.py
 
 check: rust-check contracts-check evm-test web-check docs-check
 

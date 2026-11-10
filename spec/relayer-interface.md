@@ -90,6 +90,21 @@ The relayer persists at least:
 The journal is the reorg/idempotency record. A cursor is advanced only after the block
 is final; a reorg rewinds the cursor and drops unsigned work.
 
+## Reorg handling
+
+- The safe head is the chain's `finalized` block where the RPC supports it, otherwise
+  `latest - confirmations`. Logs above the safe head are not settled.
+- The last `reorg_window` block hashes are journaled. On a mismatch the relayer walks
+  back to the common ancestor, rewinds the cursor, and rescans the range. Unprocessed
+  work is dropped with the reorged blocks.
+- If a **settled** deposit is reorged out, the relayer halts instead of continuing: the
+  rholo mint may already exist and a watcher cannot undo it. The operator reconciles
+  (pause/refund path) and restarts from a reset journal.
+- A failed-deposit journal entry in the reorged range is removed, because the native
+  lock no longer exists.
+- `harness/reorg_demo.py` proves both paths on Anvil: a rollback with no settled deposits
+  rewinds cleanly; a rollback that removes a settled deposit halts.
+
 ## Metrics
 
 ```

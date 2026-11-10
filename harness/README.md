@@ -19,11 +19,17 @@ Devnet only. Nothing here is a production relayer, and the keys are worth nothin
 - `evm_refund.py` — the recovery path for a deposit the relayer journaled as failed:
   signs the vault's `rbridge:admin:v1|refund|…` payload with 2-of-3 demo admin keys and
   returns the locked native funds to the depositor.
+- `reorg_demo.py` — proves the relayer's safe-head and reorg handling on its own Anvil
+  (no rholo node): a rollback with no settled deposits rewinds the cursor; a rollback
+  that removes a settled deposit halts the relayer for reconciliation.
 - `dev_relayer.py` — the dev watcher loop. It scans new Anvil `Deposit` logs, decodes
   the event, reads the vault asset config, signs the 2-of-3 deposit digest, and calls
   `Bridge.mint`. It also polls rholo `pendingWithdrawals`, signs the 65-byte withdrawal
   digest, calls `vault.unlock`, and marks the withdrawal complete. Start it before
-  locking; it ignores pre-existing pending withdrawals.
+  locking; it ignores pre-existing pending withdrawals. It journals block hashes and
+  only settles below a safe head (`--confirmations N` or `--finalized`); a reorg at or
+  below a settled deposit halts it. `--dry-run --once` scans and journals without rholo
+  calls, which is what `reorg_demo.py` uses.
 - `.devnet/` — generated keys (`demo-keys.json`, mode 600), the installed bridge URI,
   the Anvil vault address, rendered terms and transient files. Gitignored.
 
@@ -36,6 +42,7 @@ make mock-relayer   # HTTP relayer surface on 127.0.0.1:8099
 make e2e-evm        # cross-chain demo; requires Anvil on :8545
 make relayer-watch  # dev watcher loop; start it before locking
 make refund-failed  # return native funds for journaled failed deposits
+make reorg-demo     # anvil rollback -> cursor rewind / halt (own Anvil on :8545)
 make devnet-down
 ```
 
@@ -61,14 +68,17 @@ them, so a re-run installs a fresh bridge at a new URI and repeats the checks.
   `failed_deposits` and does not silently drop it. `evm_refund.py` returns the native
   funds through the vault's 2-of-3 admin refund; the demo verified 500,000 USDT returned
   to the depositor. A production rail needs a governed refund runbook/claim path.
+- `reorg_demo.py` proves the safe-head gate and reorg journal on Anvil: an unprocessed
+  rollback rewinds the cursor, and a rollback that removes a settled deposit halts the
+  relayer instead of minting on a stale observation.
 
 ## What it does not prove
 
 - Production chain custody: Anvil is a local EVM, not Sepolia; Tron/Nile and the Agoric
   vat are not deployed.
-- Finality: the single-validator devnet can report `finalized: false` after
-  `ProcessedWithSuccess`; the demo gates on the processed result. Testnet/production
-  must require finality.
-- Real chain watching, reorg handling, or the production rail. The harness performs the
-  watcher/attester/submitter steps manually and `mock_relayer.py` is a fixed-key
-  stand-in; the rail (standalone bridge node vs rholo plugin/sidecar) is undecided.
+- Finality on a real chain: Anvil's `finalized` tag lags 64 blocks and the interactive
+  demo defaults to `--confirmations 0`; the safe-head and reorg logic is tested, but a
+  testnet run must use `--finalized`.
+- A deep, real-chain reorg and the production rail. The harness reorg test is Anvil's
+  rollback; `mock_relayer.py` is a fixed-key stand-in; the rail (standalone bridge node
+  vs rholo plugin/sidecar) is undecided.
