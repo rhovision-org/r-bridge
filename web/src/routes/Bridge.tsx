@@ -3,9 +3,10 @@ import { parseUnits, zeroAddress, type Address } from "viem";
 import { RELAYER_ISSUE } from "../App";
 import { ASSETS, CHAIN_LABEL, type Chain } from "../lib/assets";
 import { loadConfig } from "../lib/config";
-import { lockErc20, lockEth } from "../lib/evm";
+import { depositIdFor, lockErc20, lockEth } from "../lib/evm";
 import { keystoreAddress, revAddressFromEth, unlockKeystore } from "../lib/keystore";
 import { loadSavedKeystores } from "../lib/keystore-store";
+import { readRelayerDeposit, relayerUrlConfigured } from "../lib/relayer";
 import { bridgeDeployTerm, burnCall } from "../lib/rholo";
 import {
   getTronWeb,
@@ -46,6 +47,9 @@ export default function Bridge() {
   const [error, setError] = useState<string | null>(null);
   const [tx, setTx] = useState<string | null>(null);
   const [approveTx, setApproveTx] = useState<string | null>(null);
+  const [depositId, setDepositId] = useState<string | null>(null);
+  const [relayerState, setRelayerState] = useState<string | null>(null);
+  const [relayerError, setRelayerError] = useState<string | null>(null);
   const [withdrawal, setWithdrawal] = useState<WithdrawalState | null>(null);
 
   // Deployment assets only: ETH/USDT on the TVM vault, ETH/USDT on Anvil. Other
@@ -137,10 +141,56 @@ export default function Bridge() {
     }
   }
 
+  const RELAYER_LABEL: Record<string, string> = {
+    waiting: "waiting for relayers",
+    minted: "minted on rholo",
+    failed: "failed",
+    skipped: "skipped",
+    dry_run: "dry-run (no mint)",
+    unreachable: "unreachable",
+  };
+
+  async function trackDeposit(hash: string) {
+    const base = config.relayerUrl.trim();
+    if (!config.vault || !relayerUrlConfigured(base)) return;
+    try {
+      const id = await depositIdFor(
+        hash as `0x${string}`,
+        config.vault as Address,
+        config.anvilRpc,
+      );
+      if (!id) return;
+      setDepositId(id);
+      setRelayerState("waiting");
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        try {
+          const deposit = await readRelayerDeposit(base, id);
+          if (deposit) {
+            setRelayerState(deposit.state);
+            if (deposit.error) setRelayerError(deposit.error);
+            if (["minted", "failed", "skipped", "dry_run"].includes(deposit.state)) {
+              return;
+            }
+          }
+        } catch (caught) {
+          setRelayerState("unreachable");
+          setRelayerError(caught instanceof Error ? caught.message : String(caught));
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+      }
+    } catch (caught) {
+      setRelayerError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   async function lock() {
     setError(null);
     setTx(null);
     setApproveTx(null);
+    setDepositId(null);
+    setRelayerState(null);
+    setRelayerError(null);
     if (chain === "tron") {
       await lockOnTron();
       return;
@@ -163,8 +213,9 @@ export default function Bridge() {
     }
     setBusy(true);
     try {
+      let hash: string;
       if (evmToken === zeroAddress) {
-        const hash = await lockEth({
+        hash = await lockEth({
           vault: config.vault as Address,
           amountEth: amount,
           rholoRecipient: recipient,
@@ -172,7 +223,6 @@ export default function Bridge() {
           account,
           rpc: config.anvilRpc,
         });
-        setTx(hash);
       } else {
         const result = await lockErc20({
           vault: config.vault as Address,
@@ -184,8 +234,10 @@ export default function Bridge() {
           rpc: config.anvilRpc,
         });
         setApproveTx(result.approve ?? null);
-        setTx(result.lock);
+        hash = result.lock;
       }
+      setTx(hash);
+      void trackDeposit(hash);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -579,6 +631,13 @@ export default function Bridge() {
             {chain === "tron"
               ? "The demo relayer watches Anvil only, so a Tron deposit is not minted here; a production rail must watch the TVM vault."
               : "The relayer will attest and mint; the wrapped balance appears on the Overview page."}
+          </p>
+        ) : null}
+        {depositId ? (
+          <p className="hint">
+            Deposit <span className="mono">{depositId}</span>: relayer{" "}
+            {RELAYER_LABEL[relayerState ?? "waiting"] ?? relayerState}
+            {relayerError ? ` (${relayerError})` : ""}.
           </p>
         ) : null}
         {withdrawal ? (

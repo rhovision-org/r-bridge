@@ -165,6 +165,7 @@ class Relayer:
         )
         self.state.setdefault("deposits", [])
         self.state.setdefault("withdrawals", [])
+        self.state.setdefault("withdrawals_detail", {})
         self.state.setdefault("deposit_blocks", {})
         self.state.setdefault("block_hashes", {})
         self.state.setdefault("reorgs", [])
@@ -254,11 +255,44 @@ class Relayer:
             }
         ]
 
+    def deposit_view(self, deposit_id: str) -> dict | None:
+        record = self.state["deposit_blocks"].get(deposit_id)
+        if record:
+            return {
+                "deposit_id": deposit_id,
+                "state": record.get("state", "settled"),
+                "message": record.get("message"),
+                "signatures": record.get("signatures", []),
+                "block": record.get("block"),
+                "tx": record.get("tx"),
+                "dry_run": record.get("dry_run", False),
+            }
+        failed = self.state["failed_deposits"].get(deposit_id)
+        if failed:
+            return {
+                "deposit_id": deposit_id,
+                "state": "failed",
+                "error": failed.get("reason"),
+                "block": failed.get("block"),
+                "tx": failed.get("tx"),
+            }
+        return None
+
+    def attestation_view(self, deposit_id: str) -> dict | None:
+        record = self.state["deposit_blocks"].get(deposit_id)
+        if record and record.get("signatures"):
+            return {
+                "message": record.get("message"),
+                "signatures": record.get("signatures"),
+            }
+        return None
+
     def start_http(self, port: int, bind: str) -> None:
         relayer = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802 - http.server API
+                parts = self.path.strip("/").split("/")
                 if self.path == "/metrics":
                     body = relayer.metrics_text().encode()
                     content_type = "text/plain; version=0.0.4"
@@ -267,6 +301,31 @@ class Relayer:
                     content_type = "application/json"
                 elif self.path == "/v1/chains":
                     body = json.dumps(relayer.chains()).encode()
+                    content_type = "application/json"
+                elif len(parts) == 3 and parts[:2] == ["v1", "deposits"]:
+                    view = relayer.deposit_view(parts[2])
+                    if view is None:
+                        self.send_error(404)
+                        return
+                    body = json.dumps(view).encode()
+                    content_type = "application/json"
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["v1", "deposits"]
+                    and parts[3] == "attestation"
+                ):
+                    view = relayer.attestation_view(parts[2])
+                    if view is None:
+                        self.send_error(404)
+                        return
+                    body = json.dumps(view).encode()
+                    content_type = "application/json"
+                elif len(parts) == 3 and parts[:2] == ["v1", "withdrawals"]:
+                    view = relayer.state["withdrawals_detail"].get(parts[2])
+                    if view is None:
+                        self.send_error(404)
+                        return
+                    body = json.dumps(view).encode()
                     content_type = "application/json"
                 else:
                     self.send_error(404)
@@ -476,16 +535,21 @@ class Relayer:
         amount_native = deposit["amount_native"]
         if amount_native % scale != 0:
             print(f"skip deposit {deposit['deposit_id']}: not a scale multiple")
-            self.mark_deposit(deposit)
+            self.mark_deposit(deposit, "skipped")
             return
         amount_rholo = amount_native // scale
         chain, asset_id = config["asset_key"].split(".", 1)
+        message = (
+            f"rbridge:v1|{self.bridge['network']}|{chain}|{self.bridge['bridge_id']}|"
+            f"{config['asset_key']}|deposit|{deposit['deposit_id']}|{amount_rholo}|"
+            f"{deposit['recipient']}|{deposit['nonce']}"
+        )
         if self.dry_run:
             print(
                 f"dry-run: would mint {amount_rholo} {config['asset_key']} "
                 f"for deposit {deposit['deposit_id']} (block {deposit['block']})"
             )
-            self.mark_deposit(deposit)
+            self.mark_deposit(deposit, "dry_run", message=message)
             return
         if config["asset_key"] not in self.rholo_assets:
             record = demo.call_read(
@@ -506,11 +570,6 @@ class Relayer:
                 f"[{asset.get('minDeposit')}, {asset.get('maxDeposit')}]",
             )
             return
-        message = (
-            f"rbridge:v1|{self.bridge['network']}|{chain}|{self.bridge['bridge_id']}|"
-            f"{config['asset_key']}|deposit|{deposit['deposit_id']}|{amount_rholo}|"
-            f"{deposit['recipient']}|{deposit['nonce']}"
-        )
         signatures = [demo.sign_text(secret, message)["signature"] for secret in self.relayer_secrets]
         result = demo.call_write(
             self.bridge["uri"],
@@ -522,13 +581,19 @@ class Relayer:
         )
         print(f"deposit {deposit['deposit_id']} -> mint {result!r}")
         if result and result[0] is True:
-            self.mark_deposit(deposit)
+            self.mark_deposit(deposit, "minted", message=message, signatures=signatures)
         elif result == (False, "replay"):
-            self.mark_deposit(deposit)
+            self.mark_deposit(deposit, "minted", message=message, signatures=signatures)
         else:
             self.record_failure(deposit, repr(result))
 
-    def mark_deposit(self, deposit: dict) -> None:
+    def mark_deposit(
+        self,
+        deposit: dict,
+        state: str,
+        message: str | None = None,
+        signatures: list[str] | None = None,
+    ) -> None:
         """Record a settled deposit with its block, so a later reorg can be detected."""
         deposit_id = deposit["deposit_id"]
         if deposit_id not in self.state["deposits"]:
@@ -539,6 +604,9 @@ class Relayer:
             "tx": deposit["tx"],
             "amount_native": deposit.get("amount_native"),
             "token": deposit.get("token"),
+            "state": state,
+            "message": message,
+            "signatures": signatures or [],
             "dry_run": self.dry_run,
         }
         self.save()
@@ -591,6 +659,11 @@ class Relayer:
                 # The dev watcher only settles the Anvil ETH asset and well-formed
                 # 20-byte destinations; other pending records are left to their rail.
                 self.state["withdrawals"].append(withdrawal_id)
+                self.state["withdrawals_detail"][withdrawal_id] = {
+                    "withdrawal_id": withdrawal_id,
+                    "state": "ignored",
+                    "reason": "unsupported destination for the dev watcher",
+                }
                 self.save()
                 continue
             self.settle_withdrawal(withdrawal_id, withdrawal)
@@ -627,6 +700,12 @@ class Relayer:
             )
         except RuntimeError as error:
             print(f"withdrawal {withdrawal_id}: unlock failed: {error}")
+            self.state["withdrawals_detail"][withdrawal_id] = {
+                "withdrawal_id": withdrawal_id,
+                "state": "failed",
+                "error": str(error),
+            }
+            self.save()
             return
         native_tx = tx["transactionHash"]
         complete = demo.call_write(
@@ -638,6 +717,11 @@ class Relayer:
         print(f"withdrawal {withdrawal_id} -> unlock {native_tx} complete {complete!r}")
         if complete and complete[0] is True:
             self.state["withdrawals"].append(withdrawal_id)
+            self.state["withdrawals_detail"][withdrawal_id] = {
+                "withdrawal_id": withdrawal_id,
+                "state": "unlocked",
+                "native_tx": native_tx,
+            }
             self.save()
 
     def halted_reason(self) -> str | None:

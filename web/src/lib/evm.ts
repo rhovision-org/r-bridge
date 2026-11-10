@@ -12,8 +12,10 @@ import {
   formatEther,
   formatUnits,
   http,
+  keccak256,
   parseEther,
   parseUnits,
+  toHex,
   zeroAddress,
   type Address,
   type EIP1193Provider,
@@ -391,6 +393,33 @@ export async function lockErc20(options: {
     throw new Error(`The lock transaction reverted: ${lock}`);
   }
   return { approve, lock };
+}
+
+const DEPOSIT_TOPIC = keccak256(
+  toHex("Deposit(bytes32,address,address,uint256,string,uint256)"),
+);
+
+/**
+ * The deposit id (`topics[1]`) from a vault `Deposit` log in the lock receipt. Used to
+ * follow the deposit on the relayer's read API.
+ */
+export async function depositIdFor(
+  hash: Hash,
+  vault: Address,
+  rpc: string,
+): Promise<string | null> {
+  const client = createPublicClient({ chain: anvilChain(rpc), transport: http(rpc) });
+  const receipt = await client.getTransactionReceipt({ hash });
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== vault.toLowerCase()) continue;
+    if (
+      log.topics[0]?.toLowerCase() === DEPOSIT_TOPIC.toLowerCase() &&
+      log.topics[1]
+    ) {
+      return log.topics[1];
+    }
+  }
+  return null;
 }
 
 export function formatEth(value: bigint): string {

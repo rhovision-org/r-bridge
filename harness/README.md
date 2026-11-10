@@ -25,6 +25,9 @@ Devnet only. Nothing here is a production relayer, and the keys are worth nothin
 - `metrics_demo.py` — runs the relayer with `--metrics-port 9110` against its own Anvil,
   settles a deposit, then rolls it back. Checks `/metrics`, `/health` and `/v1/chains`,
   and that the endpoints stay up while halted.
+- `api_demo.py` — checks the deposit read API on `:9112`: the journaled state and
+  canonical message for a settled deposit, 404 for an unattested dry-run and unknown
+  ids, and `/health` staying up.
 - `dev_relayer.py` — the dev watcher loop. It scans new Anvil `Deposit` logs, decodes
   the event, reads the vault asset config, signs the 2-of-3 deposit digest, and calls
   `Bridge.mint`. It also polls rholo `pendingWithdrawals`, signs the 65-byte withdrawal
@@ -33,8 +36,8 @@ Devnet only. Nothing here is a production relayer, and the keys are worth nothin
   only settles below a safe head (`--confirmations N` or `--finalized`); a reorg at or
   below a settled deposit halts it. `--dry-run --once` scans and journals without rholo
   calls, which is what `reorg_demo.py` uses. `--metrics-port 9110` serves `/metrics`
-  (Prometheus), `/health` and `/v1/chains` from the journal; the endpoints stay up while
-  halted.
+  (Prometheus), `/health`, `/v1/chains` and `/v1/deposits/{id}` (+ `/attestation`) from
+  the journal; the endpoints stay up while halted.
 - `.devnet/` — generated keys (`demo-keys.json`, mode 600), the installed bridge URI,
   the Anvil vault address, rendered terms and transient files. Gitignored.
 
@@ -49,6 +52,7 @@ make relayer-watch  # dev watcher loop; start it before locking
 make refund-failed  # return native funds for journaled failed deposits
 make reorg-demo     # anvil rollback -> cursor rewind / halt (own Anvil on :8545)
 make metrics-demo   # /metrics, /health, /v1/chains + halted state (own Anvil, :9110)
+make api-demo       # deposit read API and 404 paths (own Anvil, :9112)
 make devnet-down
 ```
 

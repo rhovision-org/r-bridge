@@ -63,6 +63,7 @@ make relayer-watch            # dev watcher loop (Anvil -> rholo, rholo -> Anvil
 make refund-failed            # 2-of-3 admin refund of failed deposits
 make reorg-demo               # safe-head/reorg journal test on its own Anvil
 make metrics-demo             # /metrics, /health, /v1/chains on :9110
+make api-demo                 # deposit read API and 404 paths on :9112
 ```
 
 ## Status labels

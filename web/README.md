@@ -29,6 +29,10 @@ module (next phase).
   vault, derives the rholo address from the Tron account (the same 20-byte key payload),
   and reads TRX/USDT balances in the portfolio. The demo relayer watches Anvil only, so a
   Tron deposit is not minted here yet; a production rail must watch the TVM vault.
+- **Relayer status**: Overview shows the relayer's health, threshold/signers and per-chain
+  head/enabled state; after an Anvil lock the Bridge reads the deposit id from the
+  receipt and follows `/v1/deposits/{id}`, showing "waiting for relayers" → "minted on
+  rholo" (or failed/unreachable).
 - **WASM-signed rholo burn** for the withdraw direction: either the imported keystore or
   the dev secret signs the deploy in the browser, and the relayer unlocks on Anvil.
 - **Portfolio** polls every 5 seconds, so a lock that the relayer mints appears as a
@@ -68,6 +72,7 @@ Set these in the app's Settings (values come from `.devnet/`):
 | USDT token | `.devnet/evm.json` → `token` |
 | Tron vault | a Nile/TVM deployment manifest (base58); optional for the demo |
 | TRC-20 USDT | a Nile test token or the mainnet contract; required to test Tron USDT |
+| Relayer URL | `http://127.0.0.1:8099` (mock) or the dev watcher's `--metrics-port` |
 | rholo address | `.devnet/demo-keys.json` → `deployer.rev_address` |
 | Anvil RPC | `http://127.0.0.1:8545` |
 
@@ -104,8 +109,9 @@ make web-e2e                                          # or npm --prefix web run 
 Playwright starts its own Anvil on `:8546`, deploys the vault and mock USDT with
 `forge`, mints 2 USDT to Anvil account 0, serves the app on `:4173`, and injects a
 MetaMask-shaped EIP-1193 provider backed by that account, and a TronLink/TronWeb stub.
-The specs cover the ETH lock, the USDT approve+lock, the TronLink TRC-20 approve+lock,
-the client-side cap refusal and keystore create/download/import. They do not need the
+The specs cover the ETH lock (including following the relayer to "minted"), the USDT
+approve+lock, the TronLink TRC-20 approve+lock, the Overview relayer card, the
+client-side cap refusal and keystore create/download/import. They do not need the
 rholo devnet because they stop before mint/burn. Requires Foundry; the CI `e2e` job
 installs Chromium and runs it.
 

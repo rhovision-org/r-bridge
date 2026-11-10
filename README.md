@@ -173,12 +173,15 @@ distinguishable from an error.
 - Relayer read client: `RelayerClient` in the SDK and `rbridge relayer
   health|chains|deposit|withdrawal|attestation` in the CLI. 8 client tests (both chain
   shapes, 404-to-null, HTTP errors, path-safe ids) pass; the CLI was exercised live
-  against `make mock-relayer` (health, chains, deposit and attestation).
+  against `make mock-relayer` (health, chains, deposit and attestation). The dev watcher
+  now serves `/v1/deposits/{id}` and `/attestation` from its journal, and the web app
+  follows a lock through that API (Bridge shows the relayer state; Overview shows a
+  relayer card). `make api-demo` checks the endpoints.
 - Web demo: live rholo bridge/vault reads, MetaMask ETH and USDT locks (approve +
   lock), TronLink TRX/TRC-20 deposits against the TVM vault, a WASM-signed rholo burn
   for withdraw, and rholo keystore create/import/load (Web3 v3, r-wallet compatible;
   save to device or keep an encrypted copy in the browser; MetaMask keys work as rholo
-  keys); 36 unit + 7 Playwright browser tests + 5 opt-in live tests pass, and a Node
+  keys); 43 unit + 8 Playwright browser tests + 5 opt-in live tests pass, and a Node
   smoke test signs and submits a burn through the wasm client.
 - Agoric vat: Zoe escrow/release contract passes deposit, 2-of-3 release, replay,
   below-threshold and wrong-digest tests. No live Agoric chain/IBC or Agoric watcher yet.

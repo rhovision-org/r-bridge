@@ -11,6 +11,8 @@ export interface AppConfig {
   /** TVM vault address (base58) and its TRC-20 USDT; enables the TronLink lock. */
   tronVault: string;
   tronUsdt: string;
+  /** Relayer read API (mock on :8099 or the dev watcher's metrics port). */
+  relayerUrl: string;
   rholoAddress: string;
   anvilRpc: string;
 }
@@ -24,6 +26,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   usdtToken: import.meta.env.VITE_RBRIDGE_USDT ?? "",
   tronVault: import.meta.env.VITE_RBRIDGE_TRON_VAULT ?? "",
   tronUsdt: import.meta.env.VITE_RBRIDGE_TRON_USDT ?? "",
+  relayerUrl: import.meta.env.VITE_RBRIDGE_RELAYER ?? "",
   rholoAddress: import.meta.env.VITE_RHOLO_ADDRESS ?? "",
   anvilRpc: import.meta.env.VITE_ANVIL_RPC ?? "http://127.0.0.1:8545",
 };

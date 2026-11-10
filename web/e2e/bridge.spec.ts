@@ -34,6 +34,7 @@ async function configure(page: Page): Promise<void> {
           usdtToken: config.token,
           tronVault: "TWS1Y2r3j4v5w6x7y8z9A1B2C3D4E5F6G7",
           tronUsdt: "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj",
+          relayerUrl: "http://127.0.0.1:9199",
           rholoAddress: "",
           anvilRpc: config.rpc,
         }),
@@ -126,11 +127,49 @@ async function configure(page: Page): Promise<void> {
   );
 }
 
+async function routeRelayer(page: Page, depositState = "minted"): Promise<void> {
+  await page.route("http://127.0.0.1:9199/**", async (route) => {
+    const url = route.request().url();
+    const headers = { "access-control-allow-origin": "*" };
+    if (url.endsWith("/health")) {
+      return route.fulfill({
+        status: 200,
+        headers,
+        json: {
+          version: "dev",
+          chains: ["ethereum"],
+          threshold: 2,
+          signers: 3,
+          paused: false,
+          halted: null,
+          last_block: 12,
+        },
+      });
+    }
+    if (url.endsWith("/v1/chains")) {
+      return route.fulfill({
+        status: 200,
+        headers,
+        json: [{ chain: "ethereum", head: 12, enabled: true }],
+      });
+    }
+    if (url.includes("/v1/deposits/")) {
+      return route.fulfill({
+        status: 200,
+        headers,
+        json: { state: depositState, signatures: [] },
+      });
+    }
+    return route.fulfill({ status: 404, headers, json: {} });
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await configure(page);
 });
 
-test("locks ETH through the configured vault", async ({ page }) => {
+test("locks ETH through the configured vault and follows the relayer", async ({ page }) => {
+  await routeRelayer(page);
   await page.goto("/#/bridge");
   await page.getByRole("button", { name: "Connect MetaMask" }).click();
   await expect(page.getByText(/MetaMask: 0xf39F/)).toBeVisible();
@@ -142,8 +181,16 @@ test("locks ETH through the configured vault", async ({ page }) => {
   await page.getByRole("button", { name: "Lock and mint" }).click();
 
   await expect(page.getByText(/Lock submitted: 0x/)).toBeVisible();
+  await expect(page.getByText(/relayer minted on rholo/)).toBeVisible();
   await page.goto("/#/");
   await expect(page.getByText(/locked 0\.1 ETH/)).toBeVisible();
+});
+
+test("shows relayer health and chains on Overview", async ({ page }) => {
+  await routeRelayer(page);
+  await page.goto("/#/");
+  await expect(page.getByText(/3 signers/)).toBeVisible();
+  await expect(page.getByText(/ethereum: head 12/)).toBeVisible();
 });
 
 test("approves and locks USDT", async ({ page }) => {

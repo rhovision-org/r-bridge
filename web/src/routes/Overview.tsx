@@ -16,6 +16,13 @@ import {
   readVaultStatus,
   type VaultStatus,
 } from "../lib/evm";
+import {
+  readRelayerChains,
+  readRelayerHealth,
+  relayerUrlConfigured,
+  type RelayerChain,
+  type RelayerHealth,
+} from "../lib/relayer";
 import { getTronWeb, isTronAddress, readTrc20Balance, readTrxBalance } from "../lib/tron";
 import { WALLET_FOR_CHAIN } from "../lib/wallets";
 
@@ -36,6 +43,9 @@ export default function Overview() {
   const [usdtBalance, setUsdtBalance] = useState<bigint | null>(null);
   const [trxBalance, setTrxBalance] = useState<bigint | null>(null);
   const [tronUsdtBalance, setTronUsdtBalance] = useState<bigint | null>(null);
+  const [relayerHealth, setRelayerHealth] = useState<RelayerHealth | null>(null);
+  const [relayerChains, setRelayerChains] = useState<RelayerChain[] | null>(null);
+  const [relayerError, setRelayerError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -111,6 +121,24 @@ export default function Overview() {
             } catch {
               if (active) setUsdtBalance(null);
             }
+          }
+        }
+      }
+
+      if (relayerUrlConfigured(config.relayerUrl)) {
+        try {
+          const [health, chains] = await Promise.all([
+            readRelayerHealth(config.relayerUrl),
+            readRelayerChains(config.relayerUrl),
+          ]);
+          if (active) {
+            setRelayerHealth(health);
+            setRelayerChains(chains);
+            setRelayerError(null);
+          }
+        } catch (error) {
+          if (active) {
+            setRelayerError(error instanceof Error ? error.message : String(error));
           }
         }
       }
@@ -229,6 +257,41 @@ export default function Overview() {
               </>
             ) : (
               <p className="muted">{vaultError ?? "Not configured."}</p>
+            )}
+          </article>
+          <article className="card">
+            <h3>Relayer</h3>
+            {relayerHealth ? (
+              <>
+                <p className="muted">
+                  {relayerHealth.version} · threshold {relayerHealth.threshold} ·{" "}
+                  {relayerHealth.signers ?? 0} signers
+                </p>
+                {(relayerChains ?? []).map((chain) => (
+                  <p className="muted" key={chain.chain}>
+                    {chain.chain}: head {chain.head ?? "—"}
+                    {chain.enabled === false ? " · disabled" : ""}
+                  </p>
+                ))}
+                <p
+                  className={
+                    relayerHealth.halted || relayerHealth.paused ? "error" : "muted"
+                  }
+                >
+                  {relayerHealth.halted
+                    ? "halted"
+                    : relayerHealth.paused
+                      ? "paused"
+                      : "active"}
+                </p>
+              </>
+            ) : (
+              <p className="muted">
+                {relayerError ??
+                  (relayerUrlConfigured(config.relayerUrl)
+                    ? "Not read yet."
+                    : "Not configured.")}
+              </p>
             )}
           </article>
           <article className="card">

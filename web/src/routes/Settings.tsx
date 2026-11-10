@@ -213,6 +213,15 @@ export default function Settings() {
           />
         </div>
         <div className="row">
+          <label htmlFor="relayer">Relayer URL</label>
+          <input
+            id="relayer"
+            placeholder="http://127.0.0.1:8099"
+            value={config.relayerUrl}
+            onChange={(event) => set("relayerUrl", event.target.value)}
+          />
+        </div>
+        <div className="row">
           <label htmlFor="rholo">rholo address</label>
           <input
             id="rholo"
