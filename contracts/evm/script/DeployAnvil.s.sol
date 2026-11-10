@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {BridgeVault} from "../src/BridgeVault.sol";
+import {MockERC20} from "../src/MockERC20.sol";
 
 interface VmScript {
     function envUint(string calldata name) external returns (uint256);
@@ -28,7 +29,10 @@ contract DeployAnvil {
         relayers[1] = vm.envAddress("RELAYER2");
         relayers[2] = vm.envAddress("RELAYER3");
 
-        BridgeVault.AssetInit[] memory inits = new BridgeVault.AssetInit[](1);
+        vm.startBroadcast(privateKey);
+        MockERC20 usdt = new MockERC20("Test USDT", "USDT", 6);
+
+        BridgeVault.AssetInit[] memory inits = new BridgeVault.AssetInit[](2);
         inits[0] = BridgeVault.AssetInit(
             address(0), // native ETH
             "ethereum.eth",
@@ -37,8 +41,15 @@ contract DeployAnvil {
             10_000_000_000, // 18 native decimals -> 8 rholo decimals
             5
         );
+        inits[1] = BridgeVault.AssetInit(
+            address(usdt),
+            "ethereum.usdt",
+            1_000_000_000_000, // 1,000,000 USDT at 6 decimals
+            1_000_000_000_000_000, // 1,000,000,000 USDT
+            1, // 6 native -> 6 rholo
+            5
+        );
 
-        vm.startBroadcast(privateKey);
         vault = new BridgeVault(
             31337,
             "rbridge-devnet",

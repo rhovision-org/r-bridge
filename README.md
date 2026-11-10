@@ -137,9 +137,11 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
 ## Current status
 
 - Phase 1 rholo demo: PASS (22 checks).
-- Phase 2 EVM vault: 9 Foundry tests pass; EVM ↔ rholo e2e PASS on Anvil + local devnet.
+- Phase 2 EVM vault: 10 Foundry tests pass (including a 2-of-3 admin refund); ETH and
+  ERC-20 USDT ↔ rholo e2e PASS on Anvil + local devnet.
 - Dev relayer loop: PASS — deposit watcher mints, withdrawal watcher unlocks and
-  completes.
+  completes; failed deposits are journaled and `make refund-failed` returns the native
+  funds via the admin refund.
 - Web demo: live rholo bridge/vault reads, MetaMask ETH lock, and a WASM-signed rholo
   burn for withdraw; 9 unit + 3 live-read tests pass, and a Node smoke test signs and
   submits a burn through the wasm client.

@@ -50,6 +50,7 @@ contract BridgeVault {
     mapping(address => uint256) public fees;
     mapping(address => mapping(uint256 => bool)) public usedDepositNonce;
     mapping(bytes32 => bool) public usedWithdrawal;
+    mapping(bytes32 => bool) public refundedDeposit;
 
     uint256 private _entered;
 
@@ -71,6 +72,9 @@ contract BridgeVault {
     );
     event Paused(bool paused);
     event FeesWithdrawn(address indexed token, address indexed to, uint256 amount);
+    event Refund(
+        bytes32 indexed depositId, address indexed token, address indexed to, uint256 amount
+    );
 
     modifier nonReentrant() {
         require(_entered == 0, "reentrant");
@@ -218,6 +222,54 @@ contract BridgeVault {
         adminNonce = nonce;
         paused = value;
         emit Paused(value);
+    }
+
+    /// @notice 2-of-3 admin refund for a deposit that was never minted on rholo.
+    /// @dev The admin set attests the deposit id, token, recipient and amount. The refund
+    ///      returns the full locked amount and is one-shot per deposit id. This is the
+    ///      recovery path for a deposit the relayer refused (for example below the rholo
+    ///      minimum); it deliberately bypasses the withdrawal fee.
+    function refund(
+        address token,
+        address to,
+        uint256 amount,
+        string calldata depositId,
+        uint256 nonce,
+        bytes[] calldata signatures
+    ) external nonReentrant {
+        require(to != address(0) && amount > 0, "args");
+        require(bytes(depositId).length > 0, "deposit");
+        bytes32 key = keccak256(bytes(depositId));
+        require(!refundedDeposit[key], "refunded");
+        require(locked[token] >= amount, "locked");
+        require(nonce > adminNonce, "replay");
+        bytes32 digest = keccak256(
+            bytes(
+                string.concat(
+                    "rbridge:admin:v1|refund|",
+                    _toHexAddress(token),
+                    "|",
+                    _toHexAddress(to),
+                    "|",
+                    _toString(amount),
+                    "|",
+                    depositId,
+                    "|",
+                    _toString(nonce)
+                )
+            )
+        );
+        _requireThreshold(digest, signatures, adminThreshold, false);
+        adminNonce = nonce;
+        refundedDeposit[key] = true;
+        locked[token] -= amount;
+        if (token == address(0)) {
+            (bool ok,) = to.call{value: amount}("");
+            require(ok, "eth transfer");
+        } else {
+            _safeTransfer(token, to, amount);
+        }
+        emit Refund(key, token, to, amount);
     }
 
     /// @notice The treasury can withdraw accrued withdrawal fees.

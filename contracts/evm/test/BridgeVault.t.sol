@@ -232,6 +232,35 @@ contract BridgeVaultTest {
         vault.lock(address(token), amount, RHOLO_RECIPIENT, 7);
     }
 
+    function testAdminRefundOfFailedDeposit() public {
+        uint256 amount = 1_000_000;
+        token.approve(address(vault), amount);
+        vault.lock(address(token), amount, RHOLO_RECIPIENT, 1);
+
+        string memory depositId = "deposit-refund-1";
+        bytes32 digest = _refundDigest(address(token), user, amount, depositId, 1);
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _sig(ADMIN1, digest);
+        sigs[1] = _sig(ADMIN2, digest);
+        vault.refund(address(token), user, amount, depositId, 1, sigs);
+        assertEq(token.balanceOf(user), amount);
+        assertEq(vault.locked(address(token)), 0);
+        assertTrue(vault.refundedDeposit(keccak256(bytes(depositId))));
+
+        vm.expectRevert();
+        vault.refund(address(token), user, amount, depositId, 2, sigs);
+
+        // Below threshold on a fresh deposit.
+        token.approve(address(vault), amount);
+        vault.lock(address(token), amount, RHOLO_RECIPIENT, 2);
+        string memory second = "deposit-refund-2";
+        bytes32 secondDigest = _refundDigest(address(token), user, amount, second, 2);
+        bytes[] memory one = new bytes[](1);
+        one[0] = _sig(ADMIN1, secondDigest);
+        vm.expectRevert();
+        vault.refund(address(token), user, amount, second, 2, one);
+    }
+
     function testEthLockAndUnlockWithFeeWithdrawal() public {
         uint256 amount = 1 ether;
         vault.lock{value: amount}(address(0), amount, RHOLO_RECIPIENT, 1);
@@ -295,6 +324,31 @@ contract BridgeVaultTest {
                     _toString(gross),
                     "|",
                     _toHexAddress(to),
+                    "|",
+                    _toString(nonce)
+                )
+            )
+        );
+    }
+
+    function _refundDigest(
+        address token,
+        address to,
+        uint256 amount,
+        string memory depositId,
+        uint256 nonce
+    ) internal pure returns (bytes32) {
+        return keccak256(
+            bytes(
+                string.concat(
+                    "rbridge:admin:v1|refund|",
+                    _toHexAddress(token),
+                    "|",
+                    _toHexAddress(to),
+                    "|",
+                    _toString(amount),
+                    "|",
+                    depositId,
                     "|",
                     _toString(nonce)
                 )

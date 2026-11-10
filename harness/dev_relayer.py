@@ -108,6 +108,8 @@ class Relayer:
         self.deployer = keys["deployer"]
         self.relayer_secrets = [self.deployer["secret"], keys["relayers"][0]["secret"]]
         demo.DEPLOY_SECRET = self.deployer["secret"]
+        evm = load_json(EVM_FILE)
+        self.token_for = evm.get("asset_keys", {"ethereum.eth": ZERO})
         self.topic = deposit_topic()
         if STATE_FILE.exists():
             self.state = load_json(STATE_FILE)
@@ -130,6 +132,7 @@ class Relayer:
             print(f"snapshot warning: {error}")
         # The bridge was installed with these assets; read the config per token lazily.
         self.assets: dict[str, dict] = {}
+        self.rholo_assets: dict[str, dict] = {}
 
     def scan_deposits(self) -> None:
         latest = int(cast("block-number", "--rpc-url", ANVIL_RPC))
@@ -173,6 +176,25 @@ class Relayer:
             return
         amount_rholo = amount_native // scale
         chain, asset_id = config["asset_key"].split(".", 1)
+        if config["asset_key"] not in self.rholo_assets:
+            record = demo.call_read(
+                self.bridge["uri"],
+                f'Bridge!("asset", "{config["asset_key"]}", *ret)',
+                "relayer_asset.rho",
+            )
+            if record and record[0] is True:
+                self.rholo_assets[config["asset_key"]] = record[1]
+        asset = self.rholo_assets.get(config["asset_key"])
+        if asset and (
+            amount_rholo < asset.get("minDeposit", 0)
+            or amount_rholo > asset.get("maxDeposit", amount_rholo)
+        ):
+            self.record_failure(
+                deposit,
+                f"rholo amount {amount_rholo} outside "
+                f"[{asset.get('minDeposit')}, {asset.get('maxDeposit')}]",
+            )
+            return
         message = (
             f"rbridge:v1|{self.bridge['network']}|{chain}|{self.bridge['bridge_id']}|"
             f"{config['asset_key']}|deposit|{deposit['deposit_id']}|{amount_rholo}|"
@@ -194,6 +216,24 @@ class Relayer:
         elif result == (False, "replay"):
             self.state["deposits"].append(deposit["deposit_id"])
             save_state(self.state)
+        else:
+            self.record_failure(deposit, repr(result))
+
+    def record_failure(self, deposit: dict, reason: str) -> None:
+        failed = self.state.setdefault("failed_deposits", {})
+        failed[deposit["deposit_id"]] = {
+            "reason": reason,
+            "amount_native": deposit["amount_native"],
+            "token": deposit["token"],
+            "sender": deposit["sender"],
+            "tx": deposit["tx"],
+            "recorded_at": int(time.time()),
+        }
+        save_state(self.state)
+        print(
+            f"FAILED deposit {deposit['deposit_id']}: {reason}; "
+            "native funds are locked and need a refund path"
+        )
 
     def scan_withdrawals(self) -> None:
         pending = demo.call_read(
@@ -217,7 +257,7 @@ class Relayer:
             if (
                 withdrawal.get("status") != "pending"
                 or withdrawal.get("destChain") != "ethereum"
-                or asset_key != "ethereum.eth"
+                or asset_key not in self.token_for
                 or not re.fullmatch(r"0x[0-9a-f]{40}", recipient)
             ):
                 # The dev watcher only settles the Anvil ETH asset and well-formed
@@ -239,13 +279,14 @@ class Relayer:
             demo.cli("sign-text-eth", "--key", secret, "--text", message)["signature"]
             for secret in self.relayer_secrets
         ]
+        token = self.token_for[asset_key]
         sig_array = "[" + ",".join("0x" + sig for sig in signatures) + "]"
         try:
             tx = cast_json(
                 "send",
                 self.vault,
                 "unlock(address,address,uint256,string,uint256,bytes[])",
-                ZERO,
+                token,
                 recipient,
                 str(amount),
                 withdrawal_id,

@@ -21,6 +21,10 @@ is intended to compile for TVM (Tron); see `../tron/README.md`.
   rholo: `rbridge:admin:v1|setPaused|<true|false>|<nonce>`. Pause blocks `lock`, not
   `unlock` or fee withdrawal.
 - **Fees:** the treasury (a constructor argument) calls `withdrawFees(token, to, amount)`.
+- **Refund:** `refund(token, to, amount, depositId, nonce, signatures)` is a 2-of-3 admin
+  recovery path for a deposit that was never minted on rholo (for example below the rholo
+  minimum). It returns the full locked amount, is one-shot per deposit id, and uses
+  `rbridge:admin:v1|refund|<token>|<to>|<amount>|<depositId>|<nonce>`.
 - **Relayer set and admin set are fixed at deployment.** Changing either is a redeploy.
   This is deliberate for the testnet demo; production can add a governed update path.
 
@@ -73,10 +77,11 @@ rholo and the 65-byte form for the vault: `rbridge sign-text-eth --key … --tex
 forge test --root contracts/evm -vv
 ```
 
-9 tests: ERC-20 lock/unlock, ETH lock/unlock with 18→8 scale, fee retention and treasury
-withdrawal, below-threshold refusal, duplicate signer, wrong digest, pause blocks lock
-but not unlock, admin threshold and replay, max deposit and nonce replay, and the shared
-Rust/EVM withdrawal digest golden vector (`d2f0ca02…e805`).
+10 tests: ERC-20 lock/unlock, ETH lock/unlock with 18→8 scale, fee retention and treasury
+withdrawal, 2-of-3 admin refund of a failed deposit (including replay and below-threshold
+refusals), below-threshold/duplicate-signer/wrong-digest unlock refusals, pause blocks
+lock but not unlock, admin threshold and replay, max deposit and nonce replay, and the
+shared Rust/EVM withdrawal digest golden vector (`d2f0ca02…e805`).
 
 The `script/DeployAnvil.s.sol` script deploys an ETH-only vault to local Anvil for the
 cross-chain demo (`make e2e-evm`).

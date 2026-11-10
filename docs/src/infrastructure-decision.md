@@ -49,11 +49,12 @@ below-threshold refusal, burn, withdrawal completion, transfer, pause/unpause an
 conservation. `make mock-relayer` exposes the read interface from
 `spec/relayer-interface.md`.
 
-The Ethereum/TVM vault is also implemented and passes 9 Foundry tests, including a
-withdrawal digest shared with the Rust signer. The cross-chain demo **passes** on Anvil +
-the local rholo devnet: lock 0.1 ETH → 2-of-3 deposit attestation → rholo mint → burn
-0.05 ETH worth → 2-of-3 65-byte EVM signatures → native unlock with fee/scale
-accounting. The harness performs the watcher/attester/submitter steps manually.
+The Ethereum/TVM vault is also implemented and passes 10 Foundry tests, including a
+withdrawal digest shared with the Rust signer and a 2-of-3 refund for failed deposits. The
+cross-chain demo **passes** on Anvil + the local rholo devnet for ETH and ERC-20 USDT:
+lock → 2-of-3 deposit attestation → rholo mint → burn → 2-of-3 65-byte EVM signatures →
+native unlock with fee/scale accounting. A deposit below the rholo minimum is journaled
+by the watcher and returned through the admin refund.
 
 The dev watcher loop also passes: a new Anvil deposit is decoded and minted on rholo
 automatically, and a new rholo burn is unlocked and completed on Anvil automatically

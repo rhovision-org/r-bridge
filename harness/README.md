@@ -13,10 +13,12 @@ Devnet only. Nothing here is a production relayer, and the keys are worth nothin
 - `mock_relayer.py` — the dev-only HTTP surface from `spec/relayer-interface.md`:
   `/health`, `/v1/chains`, `POST /v1/deposits`, `/v1/deposits/{id}` and
   `/v1/deposits/{id}/attestation`. It watches no chain; it attests what it is told.
-- `e2e_evm.py` — the cross-chain demo: deploys `BridgeVault` to Anvil, locks 0.1 ETH,
-  attests the deposit with 2-of-3 relayer signatures, mints on rholo, burns 0.05 ETH
-  worth, signs the withdrawal in 65-byte EVM form, calls `unlock`, and completes the
-  rholo withdrawal.
+- `e2e_evm.py` — the cross-chain demo: deploys `MockERC20` + `BridgeVault` to Anvil, runs
+  the ETH flow (lock 0.1 ETH → attest → mint → burn 0.05 ETH → 65-byte sigs → unlock →
+  complete) and the USDT flow (mint/approve/lock 1 USDT → mint → burn 0.4 → unlock).
+- `evm_refund.py` — the recovery path for a deposit the relayer journaled as failed:
+  signs the vault's `rbridge:admin:v1|refund|…` payload with 2-of-3 demo admin keys and
+  returns the locked native funds to the depositor.
 - `dev_relayer.py` — the dev watcher loop. It scans new Anvil `Deposit` logs, decodes
   the event, reads the vault asset config, signs the 2-of-3 deposit digest, and calls
   `Bridge.mint`. It also polls rholo `pendingWithdrawals`, signs the 65-byte withdrawal
@@ -33,6 +35,7 @@ make demo           # build the CLI, install the bridge, run the checks
 make mock-relayer   # HTTP relayer surface on 127.0.0.1:8099
 make e2e-evm        # cross-chain demo; requires Anvil on :8545
 make relayer-watch  # dev watcher loop; start it before locking
+make refund-failed  # return native funds for journaled failed deposits
 make devnet-down
 ```
 
@@ -54,6 +57,10 @@ them, so a re-run installs a fresh bridge at a new URI and repeats the checks.
 - `dev_relayer.py` proves the watcher loop: a new Anvil deposit is decoded and minted
   automatically, and a new rholo burn is unlocked and completed automatically. The
   withdrawal watcher ignores records that were already pending at startup.
+- The watcher journals a deposit it cannot mint (for example below the rholo minimum) in
+  `failed_deposits` and does not silently drop it. `evm_refund.py` returns the native
+  funds through the vault's 2-of-3 admin refund; the demo verified 500,000 USDT returned
+  to the depositor. A production rail needs a governed refund runbook/claim path.
 
 ## What it does not prove
 
