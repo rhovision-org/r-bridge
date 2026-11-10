@@ -17,6 +17,7 @@ crate-type = ["cdylib", "rlib"]
 rbridge-core = { workspace = true }
 rbridge-chain = { workspace = true, default-features = false, features = ["wasm"] }
 wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
 js-sys = { workspace = true }
 serde_json = { workspace = true }
 

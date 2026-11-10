@@ -50,7 +50,7 @@ Authority order: `spec/` and `contracts/` > `docs/` > this file.
 make fmt clippy test wasm     # Rust gates
 make build-contracts          # inline libs; writes contracts/rholo/build
 make contracts-check          # drift + 56 KiB budget
-make web-check                # npm typecheck + vitest + build
+make web-check                # wasm + npm typecheck + vitest + build
 make docs-check               # mdBook build
 make check                    # all of the above
 

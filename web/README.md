@@ -12,11 +12,18 @@ module (next phase).
   the ETH asset config.
 - **MetaMask ETH lock** against the configured vault: adds/switches to the Anvil
   network, then calls `lock` with the amount and rholo recipient.
+- **WASM-signed rholo burn** for the withdraw direction: the devnet secret signs the
+  deploy in the browser (the secret stays in memory, never persisted), and the relayer
+  unlocks on Anvil.
 - **Portfolio** polls every 5 seconds, so a lock that the relayer mints appears as a
   wrapped balance.
 
-Not wired in the UI yet: ERC-20 approves/locks, the rholo burn/withdraw direction, and
-the WASM rholo keystore. The harness/relayer covers those paths today.
+Not wired in the UI yet: ERC-20 approves/locks, TronLink/Keplr writes, and a production
+keystore (the dev secret input is for the devnet only). The harness/relayer covers the
+ERC-20 and non-EVM paths today.
+
+The web build runs `wasm-pack` in `predev`/`pretypecheck`/`prebuild`/`pretest`; it needs
+the Rust toolchain with the `wasm32-unknown-unknown` target and `wasm-pack`.
 
 ## Run the demo
 
@@ -42,8 +49,10 @@ Set these in the app's Settings (values come from `.devnet/`):
 | Anvil RPC | `http://127.0.0.1:8545` |
 
 Connect MetaMask on the Bridge page (it offers to add the Anvil network), lock 0.1 ETH,
-and watch the Overview wrapped balance after the relayer mints. The devnet key is
-throwaway; never use it with real value.
+and watch the Overview wrapped balance after the relayer mints. For withdraw, paste the
+devnet deployer secret into the signer field (it must match the configured rholo
+address), enter a 0x destination, and burn; the relayer unlocks on Anvil. The devnet key
+is throwaway; never use it with real value.
 
 ## Tests
 

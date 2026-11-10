@@ -1,12 +1,19 @@
 import { useMemo, useState } from "react";
-import type { Address, Hash } from "viem";
+import { parseUnits, type Address, type Hash } from "viem";
 import { RELAYER_ISSUE } from "../App";
 import { ASSETS, CHAIN_LABEL, type Chain } from "../lib/assets";
 import { loadConfig } from "../lib/config";
 import { lockEth } from "../lib/evm";
+import { bridgeDeployTerm, burnCall } from "../lib/rholo";
 import { connectMetaMask } from "../lib/wallets";
 
 type Direction = "deposit" | "withdraw";
+
+interface WithdrawalState {
+  id: string;
+  state: string;
+  result?: unknown;
+}
 
 export default function Bridge() {
   const [config] = useState(() => loadConfig());
@@ -15,18 +22,28 @@ export default function Bridge() {
   const [direction, setDirection] = useState<Direction>("deposit");
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState(config.rholoAddress);
+  const [rholoSecret, setRholoSecret] = useState("");
   const [account, setAccount] = useState<Address | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tx, setTx] = useState<Hash | null>(null);
+  const [withdrawal, setWithdrawal] = useState<WithdrawalState | null>(null);
 
   const chainAssets = useMemo(
     () => ASSETS.filter((asset) => asset.chain === chain && asset.enabled),
     [chain],
   );
   const asset = chainAssets.find((candidate) => candidate.id === assetId) ?? chainAssets[0];
-  const ethDeposit = direction === "deposit" && chain === "ethereum" && asset?.id === "eth";
-  const canLock = ethDeposit && Boolean(config.vault) && Boolean(account) && Number(amount) > 0;
+  const isEth = chain === "ethereum" && asset?.id === "eth";
+  const canLock =
+    direction === "deposit" && isEth && Boolean(config.vault) && Boolean(account) && Number(amount) > 0;
+  const canBurn =
+    direction === "withdraw" &&
+    isEth &&
+    Boolean(config.bridgeUri) &&
+    Boolean(rholoSecret) &&
+    Number(amount) > 0 &&
+    /^0x[0-9a-fA-F]{40}$/.test(recipient);
 
   async function connect() {
     setError(null);
@@ -70,14 +87,72 @@ export default function Bridge() {
     }
   }
 
+  async function burn() {
+    setError(null);
+    setWithdrawal(null);
+    if (!config.bridgeUri) {
+      setError("Set the bridge URI in Settings first.");
+      return;
+    }
+    if (!rholoSecret) {
+      setError("Enter the devnet rholo signer secret.");
+      return;
+    }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(recipient)) {
+      setError("Enter a 20-byte 0x destination address.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { initWasm, RholoClient, RholoKey } = await import("../wasm");
+      await initWasm();
+      const key = new RholoKey(rholoSecret);
+      const signerAddress = key.rev_address();
+      if (config.rholoAddress && signerAddress !== config.rholoAddress) {
+        setError(
+          `signer address ${signerAddress} does not match the configured rholo address ${config.rholoAddress}`,
+        );
+        return;
+      }
+      const amountRholo = parseUnits(amount, asset?.rholoDecimals ?? 8).toString();
+      const withdrawalId = `web-withdraw-${Date.now()}`;
+      const call = burnCall(`${chain}.${asset?.id}`, amountRholo, "ethereum", recipient, withdrawalId);
+      const term = bridgeDeployTerm(config.bridgeUri, call);
+      const client = new RholoClient(config.node);
+      const deployId = await client.deploy(term, rholoSecret, 8_000_000n);
+      setWithdrawal({ id: withdrawalId, state: "submitted", result: deployId });
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const status = JSON.parse(await client.deploy_status(deployId)) as {
+          state: string;
+          deploy_result?: unknown;
+          deploy_error?: string;
+        };
+        if (status.state !== "notProcessed") {
+          setWithdrawal({
+            id: withdrawalId,
+            state: status.state,
+            result: status.deploy_result ?? status.deploy_error,
+          });
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="stack">
       <section>
         <h1>Bridge</h1>
         <p className="notice">
-          The ETH lock is live against the configured Anvil vault. The relayer
-          (or <span className="mono">make relayer-watch</span> in the demo) mints on rholo
-          after finality. Withdraw is still settled by the harness/relayer in this pass.
+          ETH deposit and withdraw are live against the configured rails. The relayer
+          (or <span className="mono">make relayer-watch</span> in the demo) mints after a
+          native lock and unlocks after a rholo burn. The rholo signer below is a devnet
+          key; never use one holding real value.
         </p>
       </section>
 
@@ -150,6 +225,25 @@ export default function Bridge() {
           />
         </div>
 
+        {direction === "withdraw" ? (
+          <>
+            <div className="row">
+              <label htmlFor="secret">rholo signer (dev)</label>
+              <input
+                id="secret"
+                type="password"
+                placeholder="64-char hex secret"
+                value={rholoSecret}
+                onChange={(event) => setRholoSecret(event.target.value)}
+              />
+            </div>
+            <p className="hint">
+              Devnet only. The signer must hold the wrapped ETH and REV for phlo. It is
+              kept in memory for this session and never persisted.
+            </p>
+          </>
+        ) : null}
+
         {!account ? (
           <button type="button" onClick={connect}>
             Connect MetaMask
@@ -158,13 +252,17 @@ export default function Bridge() {
           <p className="mono">MetaMask: {account}</p>
         )}
 
-        <button type="button" onClick={lock} disabled={!canLock || busy}>
-          {busy ? "Locking…" : direction === "deposit" ? "Lock and mint" : "Burn and unlock"}
+        <button
+          type="button"
+          onClick={direction === "deposit" ? lock : burn}
+          disabled={(direction === "deposit" ? !canLock : !canBurn) || busy}
+        >
+          {busy ? "Submitting…" : direction === "deposit" ? "Lock and mint" : "Burn and unlock"}
         </button>
-        {!ethDeposit ? (
+        {!isEth ? (
           <p className="hint">
-            This UI wires the ETH lock only. ERC-20 locks and the withdrawal direction
-            use the same vault/contracts and are covered by the harness and tests.
+            This UI wires the ETH paths only. ERC-20 locks and Tron/Agoric writes use the
+            same contracts and are covered by the harness and tests.
           </p>
         ) : null}
         {error ? <p className="error">{error}</p> : null}
@@ -174,6 +272,14 @@ export default function Bridge() {
             and mint; the wrapped balance appears on the Overview page.
           </p>
         ) : null}
+        {withdrawal ? (
+          <p className="hint">
+            Withdrawal <span className="mono">{withdrawal.id}</span>: {withdrawal.state}.{" "}
+            {withdrawal.state === "processedWithSuccess"
+              ? "The relayer will unlock on Anvil and the destination balance updates after settlement."
+              : String(withdrawal.result ?? "")}
+          </p>
+        ) : null}
       </section>
 
       <section className="card">
@@ -181,7 +287,7 @@ export default function Bridge() {
         <ol>
           <li>rholo bridge reads via exploratory deploy (no key needed).</li>
           <li>Anvil vault deposits, thresholds, caps and fee accounting (9 Foundry tests).</li>
-          <li>MetaMask ETH lock into the configured vault.</li>
+          <li>MetaMask ETH lock and WASM-signed rholo burn.</li>
           <li>
             Relayer watcher (<span className="mono">make relayer-watch</span>) minting on
             rholo and unlocking on Anvil.

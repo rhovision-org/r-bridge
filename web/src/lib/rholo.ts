@@ -76,6 +76,50 @@ export function bridgeCall(uri: string, call: string): string {
   ].join("\n");
 }
 
+export function bridgeDeployTerm(uri: string, call: string): string {
+  if (!URI.test(uri)) {
+    throw new Error("bridge URI must be a rho:id:… registry URI");
+  }
+  return [
+    "new ret(`rho:rchain:deployId`), rl(`rho:registry:lookup`), ch in {",
+    `  rl!(\`${uri}\`, *ch) |`,
+    "  for (Bridge <- ch) {",
+    `    Bridge!(${call}, *ret)`,
+    "  }",
+    "}",
+  ].join("\n");
+}
+
+/** Build the burn arm arguments for a chain-qualified asset. */
+export function burnCall(
+  assetKey: string,
+  amount: string,
+  destChain: string,
+  destAddress: string,
+  withdrawalId: string,
+): string {
+  const [chain, assetId] = assetKey.split(".");
+  if (!chain || !assetId || !SAFE.test(chain) || !SAFE.test(assetId)) {
+    throw new Error("invalid asset key");
+  }
+  if (!/^\d+$/.test(amount) || amount === "0") {
+    throw new Error("amount must be a positive integer string");
+  }
+  if (!SAFE.test(destChain)) {
+    throw new Error("invalid destination chain");
+  }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(destAddress)) {
+    throw new Error("destination must be a 20-byte 0x address");
+  }
+  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(withdrawalId)) {
+    throw new Error("withdrawal id has unsupported characters");
+  }
+  return [
+    `"burn", "${chain}", "${assetId}", ${amount},`,
+    `"${destChain}", "${destAddress.toLowerCase()}", "${withdrawalId}"`,
+  ].join(" ");
+}
+
 export async function explore(node: string, term: string): Promise<unknown> {
   const res = await fetch(`${node.replace(/\/$/, "")}/api/explore-deploy`, {
     method: "POST",

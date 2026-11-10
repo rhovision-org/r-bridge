@@ -3,6 +3,7 @@
 **/__pycache__/
 *.pyc
 web/dist
+web/src/wasm/pkg/
 docs/book
 contracts/evm/out/
 contracts/evm/cache/

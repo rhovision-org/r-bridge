@@ -128,7 +128,9 @@ In Settings, set the node, bridge URI (`.devnet/bridge.json`), vault
 (`.devnet/evm.json`), rholo address (`.devnet/demo-keys.json` → `deployer.rev_address`)
 and Anvil RPC. The Overview reads the live bridge config, per-asset balances and vault
 status. On Bridge, connect MetaMask, let it add the Anvil network, and lock ETH; the
-relayer mints and the wrapped balance appears in the portfolio.
+relayer mints and the wrapped balance appears in the portfolio. For withdraw, paste the
+devnet deployer secret into the in-memory signer field, enter a 0x destination, and
+burn; the relayer unlocks on Anvil.
 
 Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.md`.
 
@@ -138,10 +140,11 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
 - Phase 2 EVM vault: 9 Foundry tests pass; EVM ↔ rholo e2e PASS on Anvil + local devnet.
 - Dev relayer loop: PASS — deposit watcher mints, withdrawal watcher unlocks and
   completes.
-- Web demo: live rholo bridge/vault reads and MetaMask ETH lock; 9 unit + 3 live-read
-  tests pass. The rholo signer/withdraw UI is next.
+- Web demo: live rholo bridge/vault reads, MetaMask ETH lock, and a WASM-signed rholo
+  burn for withdraw; 9 unit + 3 live-read tests pass, and a Node smoke test signs and
+  submits a burn through the wasm client.
 - Not yet: Sepolia/Nile/Agoric deployment, reorg handling, multi-validator finality,
-  production relayer, web withdrawal flow.
+  production relayer, ERC-20/TronLink/Keplr writes, production web keystore.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its

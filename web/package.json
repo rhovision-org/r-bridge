@@ -5,10 +5,15 @@
   "type": "module",
   "license": "AGPL-3.0-only",
   "scripts": {
+    "predev": "node scripts/build-wasm.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/build-wasm.mjs",
     "build": "tsc --noEmit && vite build",
+    "pretypecheck": "node scripts/build-wasm.mjs",
     "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/build-wasm.mjs",
     "test": "vitest run",
+    "wasm:build": "node scripts/build-wasm.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
