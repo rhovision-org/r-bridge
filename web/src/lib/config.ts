@@ -6,6 +6,8 @@ export interface AppConfig {
   node: string;
   bridgeUri: string;
   vault: string;
+  /** Devnet mock-USDT address from `.devnet/evm.json`; enables the ERC-20 lock. */
+  usdtToken: string;
   rholoAddress: string;
   anvilRpc: string;
 }
@@ -16,6 +18,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   node: import.meta.env.VITE_RBRIDGE_NODE ?? "http://localhost:40403",
   bridgeUri: import.meta.env.VITE_RBRIDGE_URI ?? "",
   vault: import.meta.env.VITE_RBRIDGE_VAULT ?? "",
+  usdtToken: import.meta.env.VITE_RBRIDGE_USDT ?? "",
   rholoAddress: import.meta.env.VITE_RHOLO_ADDRESS ?? "",
   anvilRpc: import.meta.env.VITE_ANVIL_RPC ?? "http://127.0.0.1:8545",
 };

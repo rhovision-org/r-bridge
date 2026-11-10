@@ -49,6 +49,15 @@ export default function Settings() {
           />
         </div>
         <div className="row">
+          <label htmlFor="usdt">USDT token (Anvil)</label>
+          <input
+            id="usdt"
+            placeholder="0x…"
+            value={config.usdtToken}
+            onChange={(event) => set("usdtToken", event.target.value)}
+          />
+        </div>
+        <div className="row">
           <label htmlFor="rholo">rholo address</label>
           <input
             id="rholo"
@@ -78,7 +87,8 @@ export default function Settings() {
             <span className="mono">.devnet/bridge.json</span> — the installed bridge URI.
           </li>
           <li>
-            <span className="mono">.devnet/evm.json</span> — the Anvil vault address.
+            <span className="mono">.devnet/evm.json</span> — the Anvil vault address and
+            the mock USDT token (the ERC-20 lock is disabled until the token is set).
           </li>
           <li>
             <span className="mono">.devnet/demo-keys.json</span> — the devnet deployer's REV

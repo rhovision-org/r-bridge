@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
-import { parseUnits, type Address, type Hash } from "viem";
+import { parseUnits, zeroAddress, type Address, type Hash } from "viem";
 import { RELAYER_ISSUE } from "../App";
 import { ASSETS, CHAIN_LABEL, type Chain } from "../lib/assets";
 import { loadConfig } from "../lib/config";
-import { lockEth } from "../lib/evm";
+import { lockErc20, lockEth } from "../lib/evm";
 import { bridgeDeployTerm, burnCall } from "../lib/rholo";
 import { connectMetaMask } from "../lib/wallets";
 
@@ -27,19 +27,41 @@ export default function Bridge() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tx, setTx] = useState<Hash | null>(null);
+  const [approveTx, setApproveTx] = useState<Hash | null>(null);
   const [withdrawal, setWithdrawal] = useState<WithdrawalState | null>(null);
 
+  // The demo vault has ETH and USDT; the other registry assets are read-only until
+  // they are added to a deployment.
   const chainAssets = useMemo(
-    () => ASSETS.filter((asset) => asset.chain === chain && asset.enabled),
+    () =>
+      ASSETS.filter(
+        (asset) =>
+          asset.chain === chain &&
+          asset.enabled &&
+          (chain !== "ethereum" || asset.id === "eth" || asset.id === "usdt"),
+      ),
     [chain],
   );
   const asset = chainAssets.find((candidate) => candidate.id === assetId) ?? chainAssets[0];
-  const isEth = chain === "ethereum" && asset?.id === "eth";
+  const erc20Configured = /^0x[0-9a-fA-F]{40}$/.test(config.usdtToken);
+  const token: Address | null =
+    chain !== "ethereum"
+      ? null
+      : asset?.id === "eth"
+        ? zeroAddress
+        : asset?.id === "usdt" && erc20Configured
+          ? (config.usdtToken as Address)
+          : null;
+  const supported = chain === "ethereum" && token !== null;
   const canLock =
-    direction === "deposit" && isEth && Boolean(config.vault) && Boolean(account) && Number(amount) > 0;
+    direction === "deposit" &&
+    supported &&
+    Boolean(config.vault) &&
+    Boolean(account) &&
+    Number(amount) > 0;
   const canBurn =
     direction === "withdraw" &&
-    isEth &&
+    supported &&
     Boolean(config.bridgeUri) &&
     Boolean(rholoSecret) &&
     Number(amount) > 0 &&
@@ -57,6 +79,7 @@ export default function Bridge() {
   async function lock() {
     setError(null);
     setTx(null);
+    setApproveTx(null);
     if (!config.vault) {
       setError("Set the vault address in Settings first.");
       return;
@@ -65,21 +88,43 @@ export default function Bridge() {
       setError("Connect MetaMask first.");
       return;
     }
+    if (!token) {
+      setError(
+        chain === "ethereum"
+          ? "Set the USDT token address in Settings first."
+          : "Native → rholo writes are wired for Ethereum in this demo. Tron and Agoric use the same vault/vat; see the harness.",
+      );
+      return;
+    }
     if (!recipient) {
       setError("Enter a rholo recipient.");
       return;
     }
     setBusy(true);
     try {
-      const hash = await lockEth({
-        vault: config.vault as Address,
-        amountEth: amount,
-        rholoRecipient: recipient,
-        nonce: Date.now(),
-        account,
-        rpc: config.anvilRpc,
-      });
-      setTx(hash);
+      if (token === zeroAddress) {
+        const hash = await lockEth({
+          vault: config.vault as Address,
+          amountEth: amount,
+          rholoRecipient: recipient,
+          nonce: Date.now(),
+          account,
+          rpc: config.anvilRpc,
+        });
+        setTx(hash);
+      } else {
+        const result = await lockErc20({
+          vault: config.vault as Address,
+          token,
+          amount,
+          rholoRecipient: recipient,
+          nonce: Date.now(),
+          account,
+          rpc: config.anvilRpc,
+        });
+        setApproveTx(result.approve ?? null);
+        setTx(result.lock);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -149,10 +194,10 @@ export default function Bridge() {
       <section>
         <h1>Bridge</h1>
         <p className="notice">
-          ETH deposit and withdraw are live against the configured rails. The relayer
-          (or <span className="mono">make relayer-watch</span> in the demo) mints after a
-          native lock and unlocks after a rholo burn. The rholo signer below is a devnet
-          key; never use one holding real value.
+          ETH and ERC-20 (USDT) deposit and withdraw are live against the configured
+          rails. The relayer (or <span className="mono">make relayer-watch</span> in the
+          demo) mints after a native lock and unlocks after a rholo burn. The rholo
+          signer below is a devnet key; never use one holding real value.
         </p>
       </section>
 
@@ -257,15 +302,27 @@ export default function Bridge() {
           onClick={direction === "deposit" ? lock : burn}
           disabled={(direction === "deposit" ? !canLock : !canBurn) || busy}
         >
-          {busy ? "Submitting…" : direction === "deposit" ? "Lock and mint" : "Burn and unlock"}
+          {busy
+            ? "Submitting…"
+            : direction === "deposit"
+              ? token && token !== zeroAddress
+                ? "Approve and lock"
+                : "Lock and mint"
+              : "Burn and unlock"}
         </button>
-        {!isEth ? (
+        {!supported ? (
           <p className="hint">
-            This UI wires the ETH paths only. ERC-20 locks and Tron/Agoric writes use the
-            same contracts and are covered by the harness and tests.
+            {chain === "ethereum" && asset?.id === "usdt"
+              ? "Set the USDT token address in Settings (from .devnet/evm.json → token) to lock the ERC-20."
+              : "Writes in this UI are wired for Ethereum (ETH and USDT through MetaMask). Tron and Agoric use the same contracts and are covered by the harness and tests."}
           </p>
         ) : null}
         {error ? <p className="error">{error}</p> : null}
+        {approveTx ? (
+          <p className="hint">
+            Approval mined: <span className="mono">{approveTx}</span>.
+          </p>
+        ) : null}
         {tx ? (
           <p className="hint">
             Lock submitted: <span className="mono">{tx}</span>. The relayer will attest
@@ -286,8 +343,8 @@ export default function Bridge() {
         <h2>What is live in this demo</h2>
         <ol>
           <li>rholo bridge reads via exploratory deploy (no key needed).</li>
-          <li>Anvil vault deposits, thresholds, caps and fee accounting (9 Foundry tests).</li>
-          <li>MetaMask ETH lock and WASM-signed rholo burn.</li>
+          <li>Anvil vault deposits, thresholds, caps and fee accounting (10 Foundry tests).</li>
+          <li>MetaMask ETH and USDT locks (approve + lock) and WASM-signed rholo burn.</li>
           <li>
             Relayer watcher (<span className="mono">make relayer-watch</span>) minting on
             rholo and unlocking on Anvil.

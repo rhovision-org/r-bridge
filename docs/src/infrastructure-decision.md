@@ -59,8 +59,8 @@ by the watcher and returned through the admin refund.
 The dev watcher loop also passes: a new Anvil deposit is decoded and minted on rholo
 automatically, and a new rholo burn is unlocked and completed on Anvil automatically
 (2-of-3, fixed dev keys). That makes the watcher/attester/submitter work concrete.
-The web demo now reads the live rholo bridge and Anvil vault and locks ETH through
-MetaMask, so the user-facing loop is observable end to end. The Agoric Zoe escrow/release
+The web demo now reads the live rholo bridge and Anvil vault and locks ETH and USDT
+(approve + lock) through MetaMask, so the user-facing loop is observable end to end. The Agoric Zoe escrow/release
 vat is tested at the contract level; a live Agoric chain/IBC denoms and an Agoric watcher
 remain.
 

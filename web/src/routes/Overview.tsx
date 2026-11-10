@@ -9,7 +9,13 @@ import {
 } from "../lib/assets";
 import { loadConfig, type AppConfig } from "../lib/config";
 import { readBridgeBalance, readBridgeConfig, type BridgeConfig } from "../lib/rholo";
-import { readEthBalance, readVaultStatus, type VaultStatus } from "../lib/evm";
+import {
+  formatNative,
+  readEthBalance,
+  readTokenBalance,
+  readVaultStatus,
+  type VaultStatus,
+} from "../lib/evm";
 import { WALLET_FOR_CHAIN } from "../lib/wallets";
 
 const CHAINS: Chain[] = ["ethereum", "tron", "agoric"];
@@ -22,9 +28,11 @@ export default function Overview() {
   const [bridge, setBridge] = useState<BridgeConfig | null>(null);
   const [bridgeError, setBridgeError] = useState<string | null>(null);
   const [vault, setVault] = useState<VaultStatus | null>(null);
+  const [usdtVault, setUsdtVault] = useState<VaultStatus | null>(null);
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [balances, setBalances] = useState<Record<string, number | null>>({});
   const [ethBalance, setEthBalance] = useState<bigint | null>(null);
+  const [usdtBalance, setUsdtBalance] = useState<bigint | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -61,9 +69,16 @@ export default function Overview() {
         }
       }
 
-      if (config.vault && /^0x[0-9a-fA-F]{40}$/.test(config.vault)) {
+      const vaultAddress = /^0x[0-9a-fA-F]{40}$/.test(config.vault)
+        ? (config.vault as `0x${string}`)
+        : null;
+      const usdtToken = /^0x[0-9a-fA-F]{40}$/.test(config.usdtToken)
+        ? (config.usdtToken as `0x${string}`)
+        : null;
+      const eth = addresses.ethereum;
+      if (vaultAddress) {
         try {
-          const status = await readVaultStatus(config.vault as `0x${string}`, config.anvilRpc);
+          const status = await readVaultStatus(vaultAddress, config.anvilRpc);
           if (active) {
             setVault(status);
             setVaultError(null);
@@ -71,13 +86,28 @@ export default function Overview() {
         } catch (error) {
           if (active) setVaultError(error instanceof Error ? error.message : String(error));
         }
-        const eth = addresses.ethereum;
+        if (usdtToken) {
+          try {
+            const status = await readVaultStatus(vaultAddress, config.anvilRpc, usdtToken);
+            if (active) setUsdtVault(status);
+          } catch {
+            if (active) setUsdtVault(null);
+          }
+        }
         if (eth && /^0x[0-9a-fA-F]{40}$/.test(eth)) {
           try {
             const balance = await readEthBalance(config.anvilRpc, eth as `0x${string}`);
             if (active) setEthBalance(balance);
           } catch {
             if (active) setEthBalance(null);
+          }
+          if (usdtToken) {
+            try {
+              const balance = await readTokenBalance(usdtToken, config.anvilRpc, eth as `0x${string}`);
+              if (active) setUsdtBalance(balance);
+            } catch {
+              if (active) setUsdtBalance(null);
+            }
           }
         }
       }
@@ -121,7 +151,7 @@ export default function Overview() {
         <p className="notice">
           This is a devnet demo.{" "}
           {wired ? (
-            <>Live reads are wired below; the ETH lock is on the Bridge page.</>
+            <>Live reads are wired below; ETH and USDT locks are on the Bridge page.</>
           ) : (
             <>
               Set the bridge URI, vault and rholo address in{" "}
@@ -162,8 +192,15 @@ export default function Overview() {
               <>
                 <p className="mono">{vault.assetKey}</p>
                 <p className="muted">
-                  locked {formatEther(vault.locked)} ETH · fees {formatEther(vault.fees)} ETH
+                  locked {formatNative(vault.locked, vault.decimals)} ETH · fees{" "}
+                  {formatNative(vault.fees, vault.decimals)} ETH
                 </p>
+                {usdtVault ? (
+                  <p className="muted">
+                    locked {formatNative(usdtVault.locked, usdtVault.decimals)} USDT · fees{" "}
+                    {formatNative(usdtVault.fees, usdtVault.decimals)} USDT
+                  </p>
+                ) : null}
                 <p className={vault.paused ? "error" : "muted"}>
                   {vault.paused ? "paused" : "active"}
                 </p>
@@ -239,7 +276,9 @@ export default function Overview() {
                 const native =
                   asset.chain === "ethereum" && asset.id === "eth" && ethBalance !== null
                     ? `${formatEther(ethBalance)} ETH`
-                    : "—";
+                    : asset.chain === "ethereum" && asset.id === "usdt" && usdtBalance !== null
+                      ? `${formatNative(usdtBalance, 6)} USDT`
+                      : "—";
                 return (
                   <tr key={key}>
                     <td>{CHAIN_LABEL[asset.chain]}</td>
@@ -254,8 +293,8 @@ export default function Overview() {
           </table>
         </div>
         <p className="hint">
-          Reads refresh every 5 seconds. After an ETH lock, the relayer mints and the
-          wrapped balance appears here.
+          Reads refresh every 5 seconds. After an ETH or USDT lock, the relayer mints
+          and the wrapped balance appears here.
         </p>
       </section>
     </div>

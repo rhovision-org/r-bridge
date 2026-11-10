@@ -11,7 +11,7 @@ sides. It is not a wallet: native accounts stay in MetaMask, TronLink and Keplr.
 | **Which assets?** | Native assets plus USDT/USDC/DAI where each chain has them, chain-qualified. |
 | **What is the trust model?** | Federated m-of-n relayers (2-of-3 to start). The rail they run on is undecided. |
 | **What does it depend on?** | A relayer layer: standalone bridge node or rholo plugin/sidecar — undecided ([issue #563](https://github.com/rhovision-org/rholo/issues/563)). |
-| **Status** | **Phase 1 demo and Phase 2 EVM ↔ rholo cross-chain demo pass on a local rholo devnet + Anvil; the Ethereum/TVM vault passes 9 Foundry tests.** Sepolia/Nile/Agoric and the production relayer are next. No real value moves. |
+| **Status** | **Phase 1 demo and Phase 2 EVM ↔ rholo cross-chain demo pass on a local rholo devnet + Anvil; the Ethereum/TVM vault passes 10 Foundry tests.** Sepolia/Nile/Agoric and the production relayer are next. No real value moves. |
 
 ## Wallets
 
@@ -127,10 +127,10 @@ npm --prefix web run dev
 In Settings, set the node, bridge URI (`.devnet/bridge.json`), vault
 (`.devnet/evm.json`), rholo address (`.devnet/demo-keys.json` → `deployer.rev_address`)
 and Anvil RPC. The Overview reads the live bridge config, per-asset balances and vault
-status. On Bridge, connect MetaMask, let it add the Anvil network, and lock ETH; the
-relayer mints and the wrapped balance appears in the portfolio. For withdraw, paste the
-devnet deployer secret into the in-memory signer field, enter a 0x destination, and
-burn; the relayer unlocks on Anvil.
+status. On Bridge, connect MetaMask, let it add the Anvil network, and lock ETH or USDT
+(the ERC-20 path approves the vault first); the relayer mints and the wrapped balance
+appears in the portfolio. For withdraw, paste the devnet deployer secret into the
+in-memory signer field, enter a 0x destination, and burn; the relayer unlocks on Anvil.
 
 Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.md`.
 
@@ -142,13 +142,13 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
 - Dev relayer loop: PASS — deposit watcher mints, withdrawal watcher unlocks and
   completes; failed deposits are journaled and `make refund-failed` returns the native
   funds via the admin refund.
-- Web demo: live rholo bridge/vault reads, MetaMask ETH lock, and a WASM-signed rholo
-  burn for withdraw; 9 unit + 3 live-read tests pass, and a Node smoke test signs and
-  submits a burn through the wasm client.
+- Web demo: live rholo bridge/vault reads, MetaMask ETH and USDT locks (approve +
+  lock), and a WASM-signed rholo burn for withdraw; 13 unit + 4 opt-in live tests pass,
+  and a Node smoke test signs and submits a burn through the wasm client.
 - Agoric vat: Zoe escrow/release contract passes deposit, 2-of-3 release, replay,
   below-threshold and wrong-digest tests. No live Agoric chain/IBC or Agoric watcher yet.
 - Not yet: Sepolia/Nile deployment, live Agoric/IBC, reorg handling, multi-validator
-  finality, production relayer, ERC-20/TronLink/Keplr writes, production web keystore.
+  finality, production relayer, TronLink/Keplr writes, production web keystore.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its

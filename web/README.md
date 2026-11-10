@@ -12,15 +12,19 @@ module (next phase).
   the ETH asset config.
 - **MetaMask ETH lock** against the configured vault: adds/switches to the Anvil
   network, then calls `lock` with the amount and rholo recipient.
+- **MetaMask ERC-20 approve+lock** for USDT: reads the token decimals and the vault's
+  per-asset cap/scale, approves the vault for exactly the deposit amount when the
+  allowance is short, waits for the approval receipt, then calls `lock`.
 - **WASM-signed rholo burn** for the withdraw direction: the devnet secret signs the
   deploy in the browser (the secret stays in memory, never persisted), and the relayer
   unlocks on Anvil.
 - **Portfolio** polls every 5 seconds, so a lock that the relayer mints appears as a
-  wrapped balance.
+  wrapped balance. The Overview shows native ETH and USDT balances for the connected
+  MetaMask account and the vault's per-asset locked/fee totals.
 
-Not wired in the UI yet: ERC-20 approves/locks, TronLink/Keplr writes, and a production
-keystore (the dev secret input is for the devnet only). The harness/relayer covers the
-ERC-20 and non-EVM paths today.
+Not wired in the UI yet: TronLink/Keplr writes and a production keystore (the dev
+secret input is for the devnet only). USDC/DAI remain read-only until those tokens are
+added to a vault deployment.
 
 The web build runs `wasm-pack` in `predev`/`pretypecheck`/`prebuild`/`pretest`; it needs
 the Rust toolchain with the `wasm32-unknown-unknown` target and `wasm-pack`.
@@ -45,11 +49,15 @@ Set these in the app's Settings (values come from `.devnet/`):
 | rholo node | `http://localhost:40403` |
 | Bridge URI | `.devnet/bridge.json` → `uri` |
 | Anvil vault | `.devnet/evm.json` → `vault` |
+| USDT token | `.devnet/evm.json` → `token` |
 | rholo address | `.devnet/demo-keys.json` → `deployer.rev_address` |
 | Anvil RPC | `http://127.0.0.1:8545` |
 
 Connect MetaMask on the Bridge page (it offers to add the Anvil network), lock 0.1 ETH,
-and watch the Overview wrapped balance after the relayer mints. For withdraw, paste the
+and watch the Overview wrapped balance after the relayer mints. To lock USDT, set the
+token address in Settings first; the button becomes "Approve and lock" and asks for two
+MetaMask confirmations. `make e2e-evm` mints the mock USDT to Anvil account 0, which
+MetaMask uses by default, so there is a balance to test with. For withdraw, paste the
 devnet deployer secret into the signer field (it must match the configured rholo
 address), enter a 0x destination, and burn; the relayer unlocks on Anvil. The devnet key
 is throwaway; never use it with real value.
@@ -69,5 +77,16 @@ RBRIDGE_LIVE=1 \
 RBRIDGE_URI=$(jq -r .uri .devnet/bridge.json) \
 RBRIDGE_OWNER=$(jq -r .deployer.rev_address .devnet/demo-keys.json) \
 RBRIDGE_VAULT=$(jq -r .vault .devnet/evm.json) \
+RBRIDGE_USDT=$(jq -r .token .devnet/evm.json) \
 npm --prefix web run test
+```
+
+The EVM live tests include an approve+lock against Anvil. They inject a MetaMask-shaped
+EIP-1193 provider backed by an unlocked Anvil account, so the browser code path runs
+unchanged in Node. The rholo live tests need `make devnet-up` (they skip when the bridge
+URI or node is absent); to run only the EVM cases:
+
+```bash
+RBRIDGE_LIVE=1 RBRIDGE_VAULT=… RBRIDGE_USDT=… \
+npm --prefix web exec vitest run --root web src/lib/evm.live.test.ts
 ```
