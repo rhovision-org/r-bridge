@@ -217,6 +217,9 @@ def main() -> int:
         print("FAIL  install produced no result", installed)
         return 1
     uri = decode(result[0])[0]
+    (DEVNET / "bridge.json").write_text(
+        json.dumps({"uri": uri, "network": NETWORK, "bridge_id": BRIDGE_ID}, indent=2)
+    )
     print(f"bridge uri: {uri}")
 
     passed = True

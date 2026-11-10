@@ -14,6 +14,8 @@ contract BridgeVault {
         string assetKey;
         uint256 maxDeposit;
         uint256 maxLocked;
+        /// Native units per rholo base unit: 1 for 6-decimal assets, 1e10 for 18→8.
+        uint256 scale;
         uint256 withdrawFeeBps;
     }
 
@@ -21,6 +23,7 @@ contract BridgeVault {
         bool enabled;
         uint256 maxDeposit;
         uint256 maxLocked;
+        uint256 scale;
         uint256 withdrawFeeBps;
         string assetKey;
     }
@@ -62,7 +65,8 @@ contract BridgeVault {
         bytes32 indexed withdrawalId,
         address indexed token,
         address indexed to,
-        uint256 grossAmount,
+        uint256 grossRholoAmount,
+        uint256 grossNativeAmount,
         uint256 fee
     );
     event Paused(bool paused);
@@ -112,11 +116,13 @@ contract BridgeVault {
         for (uint256 i = 0; i < assetInits.length; ++i) {
             AssetInit memory init = assetInits[i];
             require(bytes(init.assetKey).length > 0 && !assets[init.token].enabled, "asset");
+            require(init.scale > 0, "scale");
             require(init.withdrawFeeBps <= 10_000, "fee");
             assets[init.token] = AssetConfig({
                 enabled: true,
                 maxDeposit: init.maxDeposit,
                 maxLocked: init.maxLocked,
+                scale: init.scale,
                 withdrawFeeBps: init.withdrawFeeBps,
                 assetKey: init.assetKey
             });
@@ -155,9 +161,10 @@ contract BridgeVault {
         emit Deposit(depositId, token, msg.sender, amount, rholoRecipient, nonce);
     }
 
-    /// @notice Release `grossAmount` on an m-of-n relayer attestation.
-    /// @dev The digest binds the gross amount (the rholo burn amount). The withdrawal
-    ///      fee is computed here from the asset config and retained in `fees`.
+    /// @notice Release the native equivalent of the rholo burn `grossAmount` on an m-of-n
+    ///         relayer attestation.
+    /// @dev `grossAmount` is in rholo base units (the burn record's amount). The vault
+    ///      converts it with the asset's `scale` and computes the fee in native units.
     function unlock(
         address token,
         address to,
@@ -172,15 +179,17 @@ contract BridgeVault {
         bytes32 withdrawalKey = keccak256(bytes(withdrawalId));
         require(!usedWithdrawal[withdrawalKey], "withdrawal");
         require(bytes(withdrawalId).length > 0, "withdrawal");
-        require(locked[token] >= grossAmount, "locked");
+        uint256 grossNative = grossAmount * config.scale;
+        require(grossNative / config.scale == grossAmount, "scale");
+        require(locked[token] >= grossNative, "locked");
 
         bytes32 digest = _withdrawalDigest(config.assetKey, to, grossAmount, withdrawalId, nonce);
         _requireThreshold(digest, signatures, relayerThreshold, true);
 
-        uint256 fee = _feeOf(grossAmount, config.withdrawFeeBps);
-        uint256 net = grossAmount - fee;
+        uint256 fee = _feeOf(grossNative, config.withdrawFeeBps);
+        uint256 net = grossNative - fee;
         usedWithdrawal[withdrawalKey] = true;
-        locked[token] -= grossAmount;
+        locked[token] -= grossNative;
         if (fee > 0) {
             fees[token] += fee;
         }
@@ -191,7 +200,7 @@ contract BridgeVault {
         } else {
             _safeTransfer(token, to, net);
         }
-        emit Unlock(withdrawalKey, token, to, grossAmount, fee);
+        emit Unlock(withdrawalKey, token, to, grossAmount, grossNative, fee);
     }
 
     /// @notice 2-of-3-style pause/unpause. The digest matches the rholo admin payload.

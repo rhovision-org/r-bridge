@@ -11,7 +11,7 @@ sides. It is not a wallet: native accounts stay in MetaMask, TronLink and Keplr.
 | **Which assets?** | Native assets plus USDT/USDC/DAI where each chain has them, chain-qualified. |
 | **What is the trust model?** | Federated m-of-n relayers (2-of-3 to start). The rail they run on is undecided. |
 | **What does it depend on?** | A relayer layer: standalone bridge node or rholo plugin/sidecar — undecided ([issue #563](https://github.com/rhovision-org/rholo/issues/563)). |
-| **Status** | **Phase 1 demo passes on a local rholo devnet; Phase 2 Ethereum/TVM vault passes 9 tests.** Tron deployment and the Agoric vat are next. No real value moves. |
+| **Status** | **Phase 1 demo and Phase 2 EVM ↔ rholo cross-chain demo pass on a local rholo devnet + Anvil; the Ethereum/TVM vault passes 9 Foundry tests.** Sepolia/Nile/Agoric and the production relayer are next. No real value moves. |
 
 ## Wallets
 
@@ -87,6 +87,28 @@ signatures, and checks conservation. It is devnet-only; keys are generated in
 
 `make mock-relayer` starts the dev-only HTTP relayer surface from
 `spec/relayer-interface.md` on `127.0.0.1:8099` after `make demo` has created the keys.
+
+## Run the cross-chain demo (EVM ↔ rholo)
+
+With the rholo devnet and bridge from above still running, start Anvil in another
+terminal and run the harness:
+
+```bash
+~/.foundry/bin/anvil &     # local EVM on :8545
+make e2e-evm               # lock -> attest -> mint -> burn -> 65-byte sigs -> unlock
+```
+
+It deploys the vault to Anvil, locks 0.1 ETH, mints 9,995,000 wrapped units on rholo
+after a 2-of-3 attestation, burns 0.05 ETH worth, and unlocks 49,975,000,000,000,000 wei
+(0.049975 ETH after fee) to an Anvil account. This is the evidence the relayer-rail
+decision needs: the harness performs the watcher/attester/submitter steps manually.
+
+## Current status
+
+- Phase 1 rholo demo: PASS (22 checks).
+- Phase 2 EVM vault: 9 Foundry tests pass; EVM ↔ rholo e2e PASS on Anvil + local devnet.
+- Not yet: Sepolia/Nile/Agoric deployment, real chain watching, multi-validator
+  finality, production relayer, web e2e.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its

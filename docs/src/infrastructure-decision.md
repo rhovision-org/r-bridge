@@ -50,10 +50,14 @@ conservation. `make mock-relayer` exposes the read interface from
 `spec/relayer-interface.md`.
 
 The Ethereum/TVM vault is also implemented and passes 9 Foundry tests, including a
-withdrawal digest shared with the Rust signer. Not yet covered: Sepolia/Nile deployment,
-the Agoric vat, real chain watching, finality on a multi-validator/testnet, reorg
-handling, and the production relayer. Those are the evidence needed for the rail
-decision.
+withdrawal digest shared with the Rust signer. The cross-chain demo **passes** on Anvil +
+the local rholo devnet: lock 0.1 ETH → 2-of-3 deposit attestation → rholo mint → burn
+0.05 ETH worth → 2-of-3 65-byte EVM signatures → native unlock with fee/scale
+accounting. The harness performs the watcher/attester/submitter steps manually.
+
+Not yet covered: Sepolia/Nile deployment, the Agoric vat, real chain watching, finality
+on a multi-validator/testnet, reorg handling, and the production relayer. Those are the
+evidence needed for the rail decision.
 
 ## The demo
 

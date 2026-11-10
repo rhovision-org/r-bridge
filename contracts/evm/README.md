@@ -14,8 +14,9 @@ is intended to compile for TVM (Tron); see `../tron/README.md`.
   `Deposit(depositId, token, sender, amount, rholoRecipient, nonce)`.
 - **Withdraw:** `unlock(token, to, grossAmount, withdrawalId, nonce, signatures)`
   recomputes the canonical withdrawal digest, verifies `relayerThreshold` distinct
-  relayer addresses, marks the withdrawal id used, computes the withdrawal fee from the
-  asset config, releases `grossAmount - fee`, and retains `fee` in `fees[token]`.
+  relayer addresses, marks the withdrawal id used, converts the rholo-unit `grossAmount`
+  with the asset's `scale`, computes the withdrawal fee in native units, releases
+  `grossNative - fee`, and retains `fee` in `fees[token]`.
 - **Admin:** `setPaused(value, nonce, signatures)` uses the same 2-of-3 admin payload as
   rholo: `rbridge:admin:v1|setPaused|<true|false>|<nonce>`. Pause blocks `lock`, not
   `unlock` or fee withdrawal.
@@ -41,19 +42,21 @@ BridgeVault(
   address[] relayers,        // 3
   uint256 relayerThreshold,  // 2
   address treasury,
-  AssetInit[] assets         // token, assetKey, maxDeposit, maxLocked, withdrawFeeBps
+  AssetInit[] assets         // token, assetKey, maxDeposit, maxLocked, scale, feeBps
 )
 ```
 
 `token == address(0)` is native ETH. `maxDeposit`/`maxLocked` are in the token's native
-base units (wei/sat-like); the relayer scales to rholo base units off-chain.
+base units. `scale` is native units per rholo base unit (`1` for 6-decimal assets,
+`1e10` for 18→8); the canonical withdrawal digest carries the **rholo** amount and the
+vault converts to native units for the transfer and fee.
 
 ## Canonical withdrawal digest
 
 ```
 keccak256(utf8(
   "rbridge:v1|<network>|<chainName>|<bridgeId>|<assetKey>|withdraw|" +
-  "<withdrawalId>|<grossAmount>|<lowercase 0x address>|<nonce>"
+  "<withdrawalId>|<grossRholoAmount>|<lowercase 0x address>|<nonce>"
 ))
 ```
 
@@ -70,10 +73,13 @@ rholo and the 65-byte form for the vault: `rbridge sign-text-eth --key … --tex
 forge test --root contracts/evm -vv
 ```
 
-9 tests: ERC-20 lock/unlock, ETH lock/unlock, fee retention and treasury withdrawal,
-below-threshold refusal, duplicate signer, wrong digest, pause blocks lock but not unlock,
-admin threshold and replay, max deposit and nonce replay, and the shared Rust/EVM
-withdrawal digest golden vector (`d2f0ca02…e805`).
+9 tests: ERC-20 lock/unlock, ETH lock/unlock with 18→8 scale, fee retention and treasury
+withdrawal, below-threshold refusal, duplicate signer, wrong digest, pause blocks lock
+but not unlock, admin threshold and replay, max deposit and nonce replay, and the shared
+Rust/EVM withdrawal digest golden vector (`d2f0ca02…e805`).
+
+The `script/DeployAnvil.s.sol` script deploys an ETH-only vault to local Anvil for the
+cross-chain demo (`make e2e-evm`).
 
 ## Deployment
 

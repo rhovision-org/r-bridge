@@ -82,13 +82,15 @@ contract BridgeVaultTest {
         token = new MockERC20();
 
         BridgeVault.AssetInit[] memory inits = new BridgeVault.AssetInit[](2);
-        inits[0] =
-            BridgeVault.AssetInit(address(token), ASSET_KEY, 1_000_000_000, 1_000_000_000_000, 5);
+        inits[0] = BridgeVault.AssetInit(
+            address(token), ASSET_KEY, 1_000_000_000, 1_000_000_000_000, 1, 5
+        );
         inits[1] = BridgeVault.AssetInit(
             address(0),
             "ethereum.eth",
             1_000_000_000_000_000_000_000, // 1000 ETH in wei
             1_000_000_000_000_000_000_000_000, // 1,000,000 ETH in wei
+            10_000_000_000, // 18 native -> 8 rholo
             5
         );
 
@@ -231,16 +233,19 @@ contract BridgeVaultTest {
         vault.lock{value: amount}(address(0), amount, RHOLO_RECIPIENT, 1);
         assertEq(vault.locked(address(0)), amount);
 
+        // 1 ETH is 1e8 rholo base units at 8 decimals; the vault scales back by 1e10.
+        uint256 grossRholo = 100_000_000;
         string memory withdrawalId = "eth-withdrawal";
-        bytes32 digest = _withdrawDigest("ethereum.eth", user, amount, withdrawalId, 0);
+        bytes32 digest = _withdrawDigest("ethereum.eth", user, grossRholo, withdrawalId, 0);
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = _sig(RELAY1, digest);
         sigs[1] = _sig(RELAY2, digest);
-        vault.unlock(address(0), user, amount, withdrawalId, 0, sigs);
+        vault.unlock(address(0), user, grossRholo, withdrawalId, 0, sigs);
 
         uint256 fee = (amount / 10_000) * 5;
         assertEq(user.balance, amount - fee);
         assertEq(vault.fees(address(0)), fee);
+        assertEq(vault.locked(address(0)), 0);
 
         vm.prank(treasury);
         vault.withdrawFees(address(0), treasury, fee);

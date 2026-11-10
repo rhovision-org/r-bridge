@@ -4,7 +4,7 @@ RHOLO_DIR ?= ../RNodeRust
 NODE ?= http://localhost:40403
 FORGE ?= $(HOME)/.foundry/bin/forge
 
-.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer
+.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer e2e-evm
 
 fmt:
 	cargo fmt --all --check
@@ -62,6 +62,10 @@ demo: build-contracts
 
 mock-relayer:
 	$(PY) harness/mock_relayer.py
+
+# Requires Anvil on :8545 and a rholo devnet with a bridge installed (`make demo`).
+e2e-evm:
+	$(PY) harness/e2e_evm.py
 
 check: rust-check contracts-check evm-test web-check docs-check
 
