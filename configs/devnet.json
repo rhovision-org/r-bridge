@@ -1,0 +1,39 @@
+{
+  "network": "rbridge-devnet",
+  "rholo": {
+    "node": "http://localhost:40403",
+    "admin_node": "http://localhost:40405",
+    "shard": "/root",
+    "phlo_limit": 8000000,
+    "phlo_price": 1
+  },
+  "chains": {
+    "agoric": {
+      "chain_id": "agoriclocal",
+      "rpc": "http://localhost:26657",
+      "kind": "cosmos",
+      "enabled": false
+    },
+    "ethereum": {
+      "chain_id": 11155111,
+      "rpc": "http://localhost:8545",
+      "kind": "evm",
+      "enabled": false
+    },
+    "tron": {
+      "chain_id": 2494104990,
+      "rpc": "http://localhost:8090",
+      "kind": "tvm",
+      "enabled": false
+    }
+  },
+  "relayer": {
+    "threshold": 2,
+    "signers": []
+  },
+  "bridge": {
+    "root_uri": null,
+    "fee_bps_deposit": 5,
+    "fee_bps_withdraw": 5
+  }
+}

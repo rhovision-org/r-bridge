@@ -1,0 +1,21 @@
+[package]
+name = "rbridge-chain"
+description = "The rholo node seam for r-bridge, over the pinned r-cash client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["native"]
+native = ["rcash-chain/native"]
+wasm = ["rcash-chain/wasm"]
+
+[dependencies]
+rbridge-core = { workspace = true }
+rcash-chain = { workspace = true, default-features = false }
+serde_json = { workspace = true }

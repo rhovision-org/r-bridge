@@ -1,0 +1,14 @@
+/target
+**/node_modules
+web/dist
+docs/book
+.devnet/
+deployments/*.json
+!deployments/README.md
+*.key
+*.secret
+*.pem
+.env
+.env.*
+!.env.example
+.DS_Store

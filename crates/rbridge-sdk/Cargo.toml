@@ -1,0 +1,24 @@
+[package]
+name = "rbridge-sdk"
+description = "Connected r-bridge client: portfolio reads, flow types and the relayer interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["native"]
+native = ["rbridge-chain/native"]
+wasm = ["rbridge-chain/wasm"]
+
+[dependencies]
+rbridge-core = { workspace = true }
+rbridge-chain = { workspace = true, default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }

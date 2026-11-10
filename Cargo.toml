@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/rbridge-core",
+  "crates/rbridge-chain",
+  "crates/rbridge-sdk",
+  "crates/rbridge-cli",
+  "crates/rbridge-wasm",
+]
+default-members = [
+  "crates/rbridge-core",
+  "crates/rbridge-chain",
+  "crates/rbridge-sdk",
+  "crates/rbridge-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+rust-version = "1.95"
+repository = "https://github.com/rhovision-org/r-bridge"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[workspace.dependencies]
+rbridge-core = { path = "crates/rbridge-core" }
+rbridge-chain = { path = "crates/rbridge-chain", default-features = false }
+rbridge-sdk = { path = "crates/rbridge-sdk", default-features = false }
+
+# The r-cash settlement rail supplies deploy encoding, secp256k1 signing,
+# REV addresses and the node HTTP client. Pinned exactly as r-gen and r-sure do.
+rcash-core = { git = "https://github.com/rhovision-org/r-cash", rev = "49b441dea4f5561992387ed670ab263fcd5dd164" }
+rcash-chain = { git = "https://github.com/rhovision-org/r-cash", rev = "49b441dea4f5561992387ed670ab263fcd5dd164", default-features = false }
+rcash-sdk = { git = "https://github.com/rhovision-org/r-cash", rev = "49b441dea4f5561992387ed670ab263fcd5dd164", default-features = false }
+rchain-crypto = { git = "https://github.com/rhovision-org/rholo", rev = "841cb842876369deaa63e3b3e26c20d60e6c74c6", default-features = false }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+sha3 = "0.12"
+zeroize = "1"
+async-trait = "0.1"
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["macros", "time", "rt", "rt-multi-thread", "sync"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+getrandom = { version = "0.4", features = ["wasm_js"] }

@@ -1,0 +1,8 @@
+[book]
+title = "r-bridge"
+authors = ["rhovision-org"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
