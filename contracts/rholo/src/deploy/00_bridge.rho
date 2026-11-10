@@ -1,0 +1,320 @@
+// r-bridge canonical bridge (demo).
+//
+// One shared deployment per network. The wrapped-asset ledger lives here; the bridge
+// holds no ERTP purse, because ERTP has no burn arm. The mint authority is the m-of-n
+// relayer attestation over the canonical digest in spec/attestation.md.
+//
+// Placeholders (rendered by harness/render.py): network, admin set and threshold,
+// relayer set and threshold, and the asset registry map.
+new
+  Bridge, bridgeState,
+  rs(`rho:registry:insertArbitrary`),
+  deployerId(`rho:rchain:deployerId`),
+  deployId(`rho:rchain:deployId`),
+  hash(`rho:crypto:keccak256Hash`),
+  uriCh,
+  guardAnySig, guardCount,
+  callerAddress, callerPubKey, listContains, balanceOf, setBalance, addAmount, feeOf
+in {
+  // @@INLINE:lib/Guard.rho@@
+  // @@INLINE:lib/Ledger.rho@@
+
+  contract Bridge(@"balanceOf", @assetKey, @owner, ret) = {
+    for (@s <<- bridgeState) {
+      new bCh in {
+        balanceOf!(s, assetKey, owner, *bCh) |
+        for (@b <- bCh) { ret!((true, b)) }
+      }
+    }
+  } |
+
+  contract Bridge(@"asset", @assetKey, ret) = {
+    for (@s <<- bridgeState) {
+      match s.get("assets").get(assetKey) {
+        Nil => { ret!((false, "unknown asset")) }
+        a => { ret!((true, a)) }
+      }
+    }
+  } |
+
+  contract Bridge(@"fees", @assetKey, ret) = {
+    for (@s <<- bridgeState) {
+      match s.get("fees").get(assetKey) {
+        Nil => { ret!((true, 0)) }
+        v => { ret!((true, v)) }
+      }
+    }
+  } |
+
+  contract Bridge(@"withdrawal", @withdrawalId, ret) = {
+    for (@s <<- bridgeState) {
+      match s.get("withdrawals").get(withdrawalId) {
+        Nil => { ret!((false, "unknown withdrawal")) }
+        w => { ret!((true, w)) }
+      }
+    }
+  } |
+
+  contract Bridge(@"pendingWithdrawals", ret) = {
+    for (@s <<- bridgeState) {
+      ret!((true, s.get("withdrawals").keys().toList()))
+    }
+  } |
+
+  contract Bridge(@"config", ret) = {
+    for (@s <<- bridgeState) {
+      ret!((true, {
+        "network": s.get("network"),
+        "bridgeId": s.get("bridgeId"),
+        "paused": s.get("paused"),
+        "relayers": s.get("relayers"),
+        "relayerThreshold": s.get("relayerThreshold"),
+        "adminThreshold": s.get("adminThreshold")
+      }))
+    }
+  } |
+
+  contract Bridge(@"transfer", @assetKey, @to, @amount, ret) = {
+    for (@s <- bridgeState) {
+      new aCh in {
+        callerAddress!(*deployerId, *aCh) |
+        for (@a <- aCh) {
+          match a {
+            (true, from) => {
+              if (amount <= 0) {
+                bridgeState!(s) | ret!((false, "amount"))
+              } else if (to.length() == 0) {
+                bridgeState!(s) | ret!((false, "recipient"))
+              } else {
+                new bCh in {
+                  balanceOf!(s, assetKey, from, *bCh) |
+                  for (@bal <- bCh) {
+                    if (bal < amount) {
+                      bridgeState!(s) | ret!((false, "insufficient balance"))
+                    } else {
+                      new sb1, sb2, tCh in {
+                        setBalance!(s.get("balances"), assetKey, from, bal - amount, *sb1) |
+                        for (@b1 <- sb1) {
+                          balanceOf!(s, assetKey, to, *tCh) |
+                          for (@toBal <- tCh) {
+                            setBalance!(b1, assetKey, to, toBal + amount, *sb2) |
+                            for (@b2 <- sb2) {
+                              bridgeState!(s.set("balances", b2)) |
+                              ret!((true, Nil))
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            _ => { bridgeState!(s) | ret!((false, "identity")) }
+          }
+        }
+      }
+    }
+  } |
+
+  contract Bridge(@"mint", @chain, @assetId, @externalTxId, @amount, @recipient, @nonce, @sigs, ret) = {
+    for (@s <- bridgeState) {
+      match (s.get("paused"), s.get("assets").get(chain ++ "." ++ assetId)) {
+        (true, _) => { bridgeState!(s) | ret!((false, "paused")) }
+        (_, Nil) => { bridgeState!(s) | ret!((false, "unknown asset")) }
+        (_, asset) => {
+          if (asset.get("enabled") != true) {
+            bridgeState!(s) | ret!((false, "asset disabled"))
+          } else if (recipient.length() == 0) {
+            bridgeState!(s) | ret!((false, "recipient"))
+          } else if (amount < asset.get("minDeposit") || amount > asset.get("maxDeposit")) {
+            bridgeState!(s) | ret!((false, "amount out of bounds"))
+          } else {
+            match s.get("processedDeposits").get(externalTxId) {
+              Nil => {
+                new fCh in {
+                  feeOf!(amount, asset.get("feeBpsDeposit"), *fCh) |
+                  for (@fee <- fCh) {
+                    match "rbridge:v1|" ++ s.get("network") ++ "|" ++ chain ++ "|" ++ s.get("bridgeId") ++ "|" ++ chain ++ "." ++ assetId ++ "|deposit|" ++ externalTxId ++ "|" ++ amount.toString() ++ "|" ++ recipient ++ "|" ++ nonce.toString() {
+                      payload => {
+                        new hCh, okCh in {
+                        hash!(payload.toUtf8Bytes(), *hCh) |
+                        for (@digest <- hCh) {
+                          guardCount!(digest, sigs, 0, 0, s.get("relayers"), s.get("relayerThreshold"), *okCh) |
+                          for (@ok <- okCh) {
+                            if (ok == false) {
+                              bridgeState!(s) | ret!((false, "below threshold"))
+                            } else {
+                              new bCh, sbCh, fbCh in {
+                                balanceOf!(s, chain ++ "." ++ assetId, recipient, *bCh) |
+                                for (@bal <- bCh) {
+                                  setBalance!(s.get("balances"), chain ++ "." ++ assetId, recipient, bal + amount - fee, *sbCh) |
+                                  for (@b2 <- sbCh) {
+                                    addAmount!(s.get("fees"), chain ++ "." ++ assetId, fee, *fbCh) |
+                                    for (@f2 <- fbCh) {
+                                      bridgeState!(s.set("balances", b2).set("fees", f2).set("processedDeposits", s.get("processedDeposits").set(externalTxId, true))) |
+                                      ret!((true, amount - fee))
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              _ => { bridgeState!(s) | ret!((false, "replay")) }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  contract Bridge(@"burn", @chain, @assetId, @amount, @destChain, @destAddress, @withdrawalId, ret) = {
+    for (@s <- bridgeState) {
+      new aCh in {
+        callerAddress!(*deployerId, *aCh) |
+        for (@a <- aCh) {
+          match a {
+            (true, owner) => {
+              if (amount <= 0) {
+                bridgeState!(s) | ret!((false, "amount"))
+              } else {
+                match s.get("withdrawals").get(withdrawalId) {
+                  Nil => {
+                    match s.get("assets").get(chain ++ "." ++ assetId) {
+                      Nil => { bridgeState!(s) | ret!((false, "unknown asset")) }
+                      asset => {
+                        new bCh in {
+                          balanceOf!(s, chain ++ "." ++ assetId, owner, *bCh) |
+                          for (@bal <- bCh) {
+                            if (bal < amount) {
+                              bridgeState!(s) | ret!((false, "insufficient balance"))
+                            } else {
+                              new fCh in {
+                                feeOf!(amount, asset.get("feeBpsWithdraw"), *fCh) |
+                                for (@fee <- fCh) {
+                                  new sbCh in {
+                                    setBalance!(s.get("balances"), chain ++ "." ++ assetId, owner, bal - amount, *sbCh) |
+                                    for (@b2 <- sbCh) {
+                                      bridgeState!(s.set("balances", b2).set("withdrawals", s.get("withdrawals").set(withdrawalId, {
+                                        "owner": owner,
+                                        "chain": chain,
+                                        "assetId": assetId,
+                                        "amount": amount,
+                                        "fee": fee,
+                                        "destChain": destChain,
+                                        "destAddress": destAddress,
+                                        "status": "pending"
+                                      }))) |
+                                      ret!((true, withdrawalId))
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  _ => { bridgeState!(s) | ret!((false, "replay")) }
+                }
+              }
+            }
+            _ => { bridgeState!(s) | ret!((false, "identity")) }
+          }
+        }
+      }
+    }
+  } |
+
+  contract Bridge(@"completeWithdrawal", @withdrawalId, @nativeTxHash, ret) = {
+    for (@s <- bridgeState) {
+      new pkCh in {
+        callerPubKey!(*deployerId, *pkCh) |
+        for (@pk <- pkCh) {
+          new cCh in {
+            listContains!(s.get("relayers"), pk, 0, *cCh) |
+            for (@isRelayer <- cCh) {
+              match s.get("withdrawals").get(withdrawalId) {
+                Nil => { bridgeState!(s) | ret!((false, "unknown withdrawal")) }
+                w => {
+                  if (isRelayer == false) {
+                    bridgeState!(s) | ret!((false, "not a relayer"))
+                  } else if (w.get("status") != "pending") {
+                    bridgeState!(s) | ret!((false, "already complete"))
+                  } else {
+                    bridgeState!(s.set("withdrawals", s.get("withdrawals").set(withdrawalId, w.set("status", "complete").set("nativeTxHash", nativeTxHash)))) |
+                    ret!((true, Nil))
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  contract Bridge(@"admin", @action, @args, @nonce, @sigs, ret) = {
+    for (@s <- bridgeState) {
+      if (nonce <= s.get("adminNonce")) {
+        bridgeState!(s) | ret!((false, "replay"))
+      } else {
+        match "rbridge:admin:v1|" ++ action ++ "|" ++ args ++ "|" ++ nonce.toString() {
+          payload => {
+            new hCh, okCh in {
+            hash!(payload.toUtf8Bytes(), *hCh) |
+            for (@digest <- hCh) {
+              guardCount!(digest, sigs, 0, 0, s.get("admins"), s.get("adminThreshold"), *okCh) |
+              for (@ok <- okCh) {
+                if (ok == false) {
+                  bridgeState!(s) | ret!((false, "below threshold"))
+                } else {
+                  if (action == "setPaused") {
+                    if (args == "true") {
+                      bridgeState!(s.set("paused", true).set("adminNonce", nonce)) | ret!((true, Nil))
+                    } else if (args == "false") {
+                      bridgeState!(s.set("paused", false).set("adminNonce", nonce)) | ret!((true, Nil))
+                    } else {
+                      bridgeState!(s) | ret!((false, "bad args"))
+                    }
+                  } else {
+                    bridgeState!(s) | ret!((false, "unknown action"))
+                  }
+                }
+              }
+            }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  rs!(bundle+{*Bridge}, *uriCh) |
+  for (@uri <- uriCh) {
+    bridgeState!({
+      "network": __NETWORK__,
+      "bridgeId": __BRIDGE_ID__,
+      "admins": __ADMINS__,
+      "adminThreshold": __ADMIN_THRESHOLD__,
+      "relayers": __RELAYERS__,
+      "relayerThreshold": __RELAYER_THRESHOLD__,
+      "assets": __ASSETS__,
+      "balances": {},
+      "fees": {},
+      "processedDeposits": {},
+      "withdrawals": {},
+      "paused": false,
+      "adminNonce": 0
+    }) |
+    deployId!([uri])
+  }
+}

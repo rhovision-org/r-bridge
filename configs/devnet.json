@@ -35,5 +35,46 @@
     "root_uri": null,
     "fee_bps_deposit": 5,
     "fee_bps_withdraw": 5
-  }
+  },
+  "assets": [
+    {
+      "chain": "ethereum",
+      "id": "eth",
+      "symbol": "ETH",
+      "wrapped": "wETH",
+      "nativeDecimals": 18,
+      "rholoDecimals": 8,
+      "feeBpsDeposit": 5,
+      "feeBpsWithdraw": 5,
+      "minDeposit": 10000000,
+      "maxDeposit": 1000000000000,
+      "enabled": true
+    },
+    {
+      "chain": "ethereum",
+      "id": "usdt",
+      "symbol": "USDT",
+      "wrapped": "wUSDT.eth",
+      "nativeDecimals": 6,
+      "rholoDecimals": 6,
+      "feeBpsDeposit": 5,
+      "feeBpsWithdraw": 5,
+      "minDeposit": 1000000,
+      "maxDeposit": 1000000000000,
+      "enabled": true
+    },
+    {
+      "chain": "tron",
+      "id": "usdt",
+      "symbol": "USDT",
+      "wrapped": "wUSDT.trx",
+      "nativeDecimals": 6,
+      "rholoDecimals": 6,
+      "feeBpsDeposit": 5,
+      "feeBpsWithdraw": 5,
+      "minDeposit": 1000000,
+      "maxDeposit": 1000000000000,
+      "enabled": true
+    }
+  ]
 }

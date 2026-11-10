@@ -1,0 +1,61 @@
+// Identity, balances and integer fee helpers for the bridge contract.
+
+// The caller's REV address. rholo's REV address is the string-keyed holder identity in
+// the bridge ledger; the deployerId is the unforgeable caller identity.
+contract callerAddress(dId, ret) = {
+  new dops(`rho:rchain:deployerId:ops`), rev(`rho:rev:address`), pkCh, addrCh in {
+    dops!("pubKeyBytes", *dId, *pkCh) |
+    for (@pk <- pkCh) {
+      rev!("fromPublicKey", pk, *addrCh) |
+      for (@addr <- addrCh) { ret!((true, addr)) }
+    }
+  }
+} |
+
+// The caller's 65-byte secp256k1 public key, for relayer membership checks.
+contract callerPubKey(dId, ret) = {
+  new dops(`rho:rchain:deployerId:ops`), pkCh in {
+    dops!("pubKeyBytes", *dId, *pkCh) |
+    for (@pk <- pkCh) { ret!(pk) }
+  }
+} |
+
+contract listContains(@list, @value, @i, ret) = {
+  if (i >= list.length()) {
+    ret!(false)
+  } else {
+    if (list.nth(i) == value) { ret!(true) }
+    else { listContains!(list, value, i + 1, *ret) }
+  }
+} |
+
+contract balanceOf(@s, @assetKey, @owner, ret) = {
+  match s.get("balances").get(assetKey) {
+    Nil => { ret!(0) }
+    m => {
+      match m.get(owner) {
+        Nil => { ret!(0) }
+        v => { ret!(v) }
+      }
+    }
+  }
+} |
+
+contract setBalance(@balances, @assetKey, @owner, @value, ret) = {
+  match balances.get(assetKey) {
+    Nil => { ret!(balances.set(assetKey, {}.set(owner, value))) }
+    m => { ret!(balances.set(assetKey, m.set(owner, value))) }
+  }
+} |
+
+contract addAmount(@map, @key, @amount, ret) = {
+  match map.get(key) {
+    Nil => { ret!(map.set(key, amount)) }
+    v => { ret!(map.set(key, v + amount)) }
+  }
+} |
+
+// floor(amount * bps / 10000) without an intermediate that can overflow i64.
+contract feeOf(@amount, @bps, ret) = {
+  ret!(amount / 10000 * bps + (amount % 10000) * bps / 10000)
+} |

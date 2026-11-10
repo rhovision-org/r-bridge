@@ -1,11 +1,15 @@
-# Node operator guide
+# Operator guide
 
-Production relaying is an optional add-on for rholo node operators. The proposal,
-including the interface and the economics, is
-[rhovision-org/rholo#563](https://github.com/rhovision-org/rholo/issues/563). This
-chapter is the operator summary.
+**The relayer rail is undecided.** It may be a standalone relayer/bridge node, a
+plugin/sidecar for the rholo node, or a hybrid. The final product depends on that
+decision; the demo is being built in the meantime to inform it. The node-side proposal,
+with the interface and the economics, is
+[rhovision-org/rholo#563](https://github.com/rhovision-org/rholo/issues/563).
 
-## What the add-on does
+This chapter is the operator summary for either rail. The hardware, key separation,
+monitoring and incident rules are the same; only packaging and trust anchoring differ.
+
+## What the relayer does
 
 It watches Cosmos/Agoric, Ethereum and Tron; waits for finality; signs the r-bridge
 attestation digest; submits rholo mint deploys; and broadcasts native unlocks for
@@ -54,8 +58,8 @@ Sources: [EIP-7870](https://eips.ethereum.org/EIPS/eip-7870),
 
 1. Fund the deploy account with REV; confirm the node's shard id and phlo price.
 2. Register the attestation pubkey in the bridge set (governance).
-3. Start the add-on with the config in `spec/relayer-interface.md`; point it at the
-   local node's public API.
+3. Start the relayer with the config in `spec/relayer-interface.md`; point it at the
+   node's public API. The same config works for either rail.
 4. Expose `/health` and `/metrics` only to your monitoring network; do not expose the
    signing keys or an attestation-signing endpoint to the public internet.
 5. Watch `rbridge_pending`, `rbridge_errors_total`, chain head lag and confirmation

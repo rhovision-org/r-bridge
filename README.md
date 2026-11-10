@@ -9,9 +9,9 @@ sides. It is not a wallet: native accounts stay in MetaMask, TronLink and Keplr.
 | **What is it?** | A bridge dApp + Rust primitives for rholo. |
 | **Which chains?** | Cosmos/Agoric, Ethereum, Tron first; Hyperliquid later. Bitcoin is deferred. |
 | **Which assets?** | Native assets plus USDT/USDC/DAI where each chain has them, chain-qualified. |
-| **What is the trust model?** | Federated m-of-n relayers (2-of-3 to start), run by rholo node operators. |
-| **What does it depend on?** | An optional relayer add-on for the rholo node: [issue #563](https://github.com/rhovision-org/rholo/issues/563). |
-| **Status** | **Scaffold.** Contracts are not deployed; no real value moves. |
+| **What is the trust model?** | Federated m-of-n relayers (2-of-3 to start). The rail they run on is undecided. |
+| **What does it depend on?** | A relayer layer: standalone bridge node or rholo plugin/sidecar — undecided ([issue #563](https://github.com/rhovision-org/rholo/issues/563)). |
+| **Status** | **Phase 1 demo passes on a local rholo devnet.** The rholo bridge contract, mock 2-of-3 relayer and end-to-end checks run; native-chain vaults are next. No real value moves. |
 
 ## Wallets
 
@@ -24,12 +24,21 @@ r-bridge uses what the user already has:
   sign the node's deploy preimage (BLAKE2b-256 protobuf, `shardId` field 11,
   `{prehash:false}`).
 
-## Dependency on the rholo node
+## Infrastructure decision pending — demo first
 
-A bridge needs someone to watch foreign chains, attest deposits, submit rholo mints and
-broadcast native unlocks. That is an optional add-on for node operators, proposed in
-[rhovision-org/rholo#563](https://github.com/rhovision-org/rholo/issues/563). r-bridge
-develops against a mock relayer; production relaying is the node add-on.
+A bridge needs a relayer layer to watch foreign chains, attest deposits, submit rholo
+mints and broadcast native unlocks. **The rails are not decided.** Two shapes are on the
+table:
+
+1. a **standalone relayer/bridge node** repo, run independently of rholo validators; or
+2. a **plugin/sidecar for the rholo node**, run by node operators.
+
+The final product depends on that decision. In the meantime we are building a **demo**
+that is deliberately rail-agnostic: the attestation format, bridge contracts, dApp and
+CLI do not assume which rail wins. A mock relayer stands in for the real one. The demo,
+and the discussion in
+[rhovision-org/rholo#563](https://github.com/rhovision-org/rholo/issues/563), will inform
+the choice. See `docs/src/infrastructure-decision.md`.
 
 ## Repository map
 
@@ -37,9 +46,9 @@ develops against a mock relayer; production relaying is the node add-on.
 |---|---|
 | Rust primitives | `crates/rbridge-{core,chain,sdk,cli,wasm}` |
 | Web dApp | `web/` |
-| Rholang bridge suite (planned) | `contracts/rholo/` |
+| Rholang bridge contract (demo) | `contracts/rholo/` |
 | Native vaults/vat (planned) | `contracts/{evm,tron,agoric}/` |
-| Dev harness (planned) | `harness/` |
+| Dev harness + mock relayer | `harness/` |
 | Specs | `spec/` |
 | Book | `docs/` |
 | Network configs | `configs/` |
@@ -55,7 +64,31 @@ npm --prefix web run dev
 (cd docs && mdbook serve)
 ```
 
-`make check` runs the Rust, web and docs gates.
+`make check` runs the Rust, contract, web and docs gates.
+
+## Run the Phase 1 demo
+
+Prereqs: Docker, a local rholo checkout at `~/RNodeRust` (override with
+`RHOLO_DIR=...`), and the Rust toolchain.
+
+```bash
+make devnet-up    # starts a 1-validator local devnet (8 GB node memory) on :40403
+make demo         # installs the bridge, runs 22 checks, exits PASS/FAIL
+make devnet-down
+```
+
+The demo installs the rholo bridge contract, signs a deposit attestation with 2 of 3
+dev relayer keys, mints, replays the same deposit (refused), tries below-threshold
+(refused), burns, completes the withdrawal, transfers, pauses/unpauses via 2-of-3 admin
+signatures, and checks conservation. It is devnet-only; keys are generated in
+`.devnet/` and are worth nothing.
+
+`make mock-relayer` starts the dev-only HTTP relayer surface from
+`spec/relayer-interface.md` on `127.0.0.1:8099` after `make demo` has created the keys.
+
+The devnet is a single validator, which can report `finalized: false` even after
+`ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its
+gate; testnet/production must additionally require finality.
 
 ## Documents
 

@@ -9,9 +9,11 @@ Authority order: `spec/` and `contracts/` > `docs/` > this file.
   (Cosmos/Agoric). Never add native-chain key management here.
 - The only key this repo manages is the **rholo** account in `rbridge-wasm`, because the
   node's deploy signing is not something the wallets can do.
-- Production relaying is the rholo node add-on
-  ([issue #563](https://github.com/rhovision-org/rholo/issues/563)). This repo may ship a
-  development mock relayer in `harness/`; it must never be presented as production.
+- The relayer rail is **undecided**: it may be a standalone relayer/bridge node or a
+  rholo node plugin/sidecar ([issue #563](https://github.com/rhovision-org/rholo/issues/563)).
+  Keep r-bridge rail-agnostic: the attestation format, contracts, dApp and CLI must not
+  assume either shape. This repo ships only a development mock relayer in `harness/`;
+  it must never be presented as production.
 
 ## Platform rules
 
@@ -46,9 +48,15 @@ Authority order: `spec/` and `contracts/` > `docs/` > this file.
 
 ```
 make fmt clippy test wasm     # Rust gates
+make build-contracts          # inline libs; writes contracts/rholo/build
+make contracts-check          # drift + 56 KiB budget
 make web-check                # npm typecheck + vitest + build
 make docs-check               # mdBook build
 make check                    # all of the above
+
+make devnet-up                # local rholo devnet (Docker, RHOLO_DIR)
+make demo                     # Phase 1 end-to-end demo (devnet only)
+make mock-relayer             # dev-only HTTP relayer surface on :8099
 ```
 
 ## Status labels

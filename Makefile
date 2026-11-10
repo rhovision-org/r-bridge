@@ -1,6 +1,9 @@
 SHELL := /bin/bash
+PY ?= python3
+RHOLO_DIR ?= ../RNodeRust
+NODE ?= http://localhost:40403
 
-.PHONY: fmt clippy test wasm rust-check web-install web-check web-e2e docs docs-check check clean
+.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer
 
 fmt:
 	cargo fmt --all --check
@@ -15,6 +18,12 @@ wasm:
 	cargo check -p rbridge-wasm --target wasm32-unknown-unknown
 
 rust-check: fmt clippy test wasm
+
+build-contracts:
+	python3 tools/build_contracts.py
+
+contracts-check:
+	python3 tools/build_contracts.py --check
 
 web-install:
 	npm --prefix web install
@@ -33,7 +42,21 @@ docs:
 docs-check:
 	cd docs && mdbook build
 
-check: rust-check web-check docs-check
+# Local demo rails. The rholo devnet is Docker-based and lives in RHOLO_DIR.
+devnet-up:
+	cd $(RHOLO_DIR) && DEVNET_NODE_MEMORY=8g tools/devnet.sh up --validators 1
+
+devnet-down:
+	cd $(RHOLO_DIR) && tools/devnet.sh down
+
+demo: build-contracts
+	cargo build -p rbridge-cli
+	$(PY) harness/demo.py
+
+mock-relayer:
+	$(PY) harness/mock_relayer.py
+
+check: rust-check contracts-check web-check docs-check
 
 clean:
 	cargo clean

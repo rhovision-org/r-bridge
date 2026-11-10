@@ -1,11 +1,10 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
 
 use crate::chain::Chain;
 use crate::error::BridgeError;
-use crate::to_hex;
+use crate::keccak256_hex;
 
 /// A native-chain deposit, identified by the chain, vault, transaction hash and log
 /// index. The id is one-shot on rholo: a second mint with the same id is a no-op.
@@ -43,9 +42,7 @@ impl DepositId {
             tx_hash,
             log_index
         );
-        let mut hasher = Keccak256::new();
-        hasher.update(canonical.as_bytes());
-        Self::new(to_hex(&hasher.finalize()))
+        Self::new(keccak256_hex(canonical.as_bytes()))
     }
 
     pub fn as_str(&self) -> &str {

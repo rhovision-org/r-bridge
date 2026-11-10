@@ -3,9 +3,9 @@
 | Phase | Deliverable | Done when |
 |---|---|---|
 | 0 | Repo, scaffold, specs, node issue | this repository builds; issue #563 is open |
-| 1 | rholo bridge suite + devnet | BridgeRoot/WrappedToken/Bridge/Attestation deployed on a local rholo devnet; suites pass (mint, burn, transfer, replay, threshold refusal, caps, pause, conservation) |
+| 1 | rholo bridge contract + devnet | **Demo passes (2026-11-10):** a single Bridge contract + Guard/Ledger libs installed on a local devnet; 22 checks cover mint, burn, transfer, replay, threshold refusal, unknown asset, pause and conservation. The BridgeRoot/WrappedToken split is the production target, not yet done. |
 | 2 | Native contracts | Ethereum vault on Sepolia, Tron vault on Nile, Agoric vat on a local chain with mocked IBC denoms; shared digest vectors pass on all three |
-| 3 | Node relayer add-on | watchers/signers/submitters + journal + metrics; 2-of-3 local devnet, then testnets |
+| 3 | Relayer implementation | rail chosen after the demo; watchers/signers/submitters + journal + metrics; 2-of-3 local devnet, then testnets |
 | 4 | Web dApp | MetaMask/TronLink/Keplr integration, portfolio, bridge/withdraw, activity; Playwright e2e |
 | 5 | Hardening | public testnets, fee/bond/cap tuning, external audit, incident runbooks, OCapN production path |
 | 6 | Expansion | Hyperliquid adapter/listing, Bitcoin adapter (P2WSH vault + PSBT) |
@@ -20,7 +20,9 @@
 ## Dependencies
 
 - rholo node: `rho:crypto:secp256k1Verify`, `keccak256Hash`, ERTP, OCapN, finality API.
-- Node add-on: [rhovision-org/rholo#563](https://github.com/rhovision-org/rholo/issues/563).
+- Relayer rail: standalone bridge node vs rholo plugin/sidecar, decided after the demo;
+  [rhovision-org/rholo#563](https://github.com/rhovision-org/rholo/issues/563) is the
+  node-side proposal.
 - r-cash: pinned `rcash-chain`/`rcash-sdk` for deploy encoding, signing and HTTP.
 - Wallets: MetaMask, TronLink, Keplr.
 - Agoric: Zoe/ERTP, IBC denoms (Noble USDC), an Agoric testnet for phase 5.

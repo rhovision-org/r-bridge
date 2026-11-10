@@ -21,6 +21,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo check -p rbridge-wasm --target wasm32-unknown-unknown
+      - run: python3 tools/build_contracts.py --check
 
   web:
     runs-on: ubuntu-latest

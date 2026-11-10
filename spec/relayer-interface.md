@@ -1,14 +1,15 @@
-# Relayer interface (node add-on boundary)
+# Relayer interface (rail-agnostic)
 
-Production relaying is an **optional add-on for rholo node operators**, proposed in
-[rhovision-org/rholo#563](https://github.com/rhovision-org/rholo/issues/563). r-bridge
-owns the contracts, the attestation format and the dApp; the node add-on owns the
-watchers, the signing keys and the submission loops. This document is the interface
-between them.
+**The relayer rail is undecided.** It may be a standalone relayer/bridge node repo, or a
+plugin/sidecar for the rholo node. The final product depends on that decision; the demo
+is being built in the meantime to inform it. This document defines the interface either
+rail must provide, so the contracts, dApp and CLI do not depend on the answer.
+[rhovision-org/rholo#563](https://github.com/rhovision-org/rholo/issues/563) is the
+node-side proposal, not a decision.
 
 ## Responsibilities
 
-| r-bridge | Node add-on |
+| r-bridge | Relayer implementation (either rail) |
 |---|---|
 | Rholang bridge suite and native vaults/vat | Watch Cosmos/Agoric, Ethereum, Tron |
 | Attestation format and golden vectors | Wait for finality; sign the digest |
@@ -17,11 +18,12 @@ between them.
 | Deployment manifests | Key management and operator runbooks |
 
 r-bridge ships a **development mock relayer** in `harness/` with the same HTTP shape and
-a fixed dev key. It must never be pointed at a network holding real value.
+a fixed dev key. It must never be pointed at a network holding real value. The mock is
+what makes the demo independent of the rail decision.
 
 ## Configuration
 
-The add-on reads (names are a proposal for the node issue):
+The relayer reads (names are a proposal; either rail can implement them):
 
 ```toml
 node = "http://127.0.0.1:40403"       # local rnode public API
@@ -58,7 +60,7 @@ pays phlo and submits deploys. Both are encrypted at rest or held in an HSM.
 
 ## Read API (for the dApp/CLI)
 
-Read-only in production; the add-on should not expose a signing endpoint to the public
+Read-only in production; the relayer should not expose a signing endpoint to the public
 internet without authentication.
 
 | Method | Path | Result |
@@ -74,7 +76,7 @@ verification is on-chain, so a relayer does not need to be the submitter.
 
 ## Journal
 
-The add-on persists at least:
+The relayer persists at least:
 
 - `deposits(deposit_id, chain, tx_hash, log_index, block_hash, block_number, asset,
   amount, recipient, state, attempts, last_error)`
@@ -118,6 +120,18 @@ Health is a separate endpoint so a load balancer does not parse Prometheus text.
 
 - Independent operators, jurisdictions and RPC providers; do not share infra or keys.
 - Confirmation depths are configuration, but the contracts enforce the minimum.
-- The add-on must fail closed: if a chain RPC is unhealthy or a cursor is ambiguous, do
+- The relayer must fail closed: if a chain RPC is unhealthy or a cursor is ambiguous, do
   not sign. A paused bridge stops new mints; burns and unlocks of in-flight transfers
   remain available.
+
+## Rails under discussion
+
+| Rail | Strengths | Costs |
+|---|---|---|
+| Standalone relayer/bridge node | Independent of validator operations; can serve several rholo networks; single deployment/audit surface; no node release coupling | A second operator set and incentive scheme; operators must run rholo light/full access; trust is not anchored to validators |
+| rholo node plugin/sidecar | Reuses node-operator trust and monitoring; one package; phlo/validator alignment | Couples bridge releases to node releases; co-location/security constraints; every operator must opt in |
+| Hybrid | Reference relayer in its own repo, packaged as a node add-on; either deployment | Two artefacts to keep in sync |
+
+What is already rail-independent: the attestation format (`spec/attestation.md`), the
+bridge contracts, the dApp/CLI interfaces, the read API above, the journal schema and
+the metrics names. The demo exercises exactly these.

@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
 
 use crate::asset::AssetRef;
 use crate::chain::Chain;
 use crate::error::BridgeError;
-use crate::to_hex;
+use crate::{keccak256, to_hex};
 
 /// The protocol tag. Changing it is a protocol change; bump the version, never mutate it.
 pub const PROTOCOL_TAG: &str = "rbridge:v1";
@@ -100,9 +99,7 @@ impl AttestationMessage {
     /// The 32-byte keccak256 digest the relayers sign.
     pub fn digest(&self) -> Result<[u8; 32], BridgeError> {
         self.validate()?;
-        let mut hasher = Keccak256::new();
-        hasher.update(self.canonical().as_bytes());
-        Ok(hasher.finalize().into())
+        Ok(keccak256(self.canonical().as_bytes()))
     }
 
     /// Lowercase hex of [`Self::digest`].

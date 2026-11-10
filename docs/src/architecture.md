@@ -27,9 +27,10 @@ signature is not something those wallets can produce.
 | `rbridge-cli` | `crates/rbridge-cli` | node status, registry, digest |
 | `rbridge-wasm` | `crates/rbridge-wasm` | rholo key, REV address, digest signing, scaling for the web app |
 | web | `web/` | wallet connectors, portfolio, bridge/withdraw forms, activity |
-| rholo contracts | `contracts/rholo` | the canonical bridge suite |
+| rholo contracts | `contracts/rholo` | Phase 1 demo: one Bridge contract + Guard/Ledger libs; the split suite is the production target |
 | native contracts | `contracts/{evm,tron,agoric}` | vault / TVM vault / Agoric vat |
-| node add-on | external | watchers, attestation signers, mint/unlock submission |
+| relayer implementation | external (rail undecided) | watchers, attestation signers, mint/unlock submission |
+| mock relayer | `harness/` | dev-only stand-in for the relayer during the demo |
 
 ## Identities
 
@@ -43,6 +44,15 @@ signature is not something those wallets can produce.
 
 A bridge transfer binds a native depositor to a rholo recipient (deposit) or a rholo
 holder to a native recipient (withdraw). The keys do not need to be the same.
+
+## Infrastructure decision pending
+
+The relayer layer's rails are **not decided**: a standalone relayer/bridge node, a
+plugin/sidecar for the rholo node, or a hybrid (reference relayer packaged as a node
+add-on). The final product depends on that decision. The demo is deliberately
+rail-agnostic — the attestation format, contracts, dApp, CLI and read API do not assume
+a rail — and it exists to inform the choice. See
+[Infrastructure decision](infrastructure-decision.md).
 
 ## Trust boundaries
 
@@ -66,5 +76,5 @@ only a journal of observations; it has no custody.
 ## Repository map
 
 See `README.md` for the full map. The Rust workspace is deliberately small: the
-production relayer is the node add-on, not a crate here. `harness/` contains the
-development devnet and the mock relayer.
+production relayer is outside this repository, and which rail hosts it is still open.
+`harness/` contains the development devnet and the mock relayer used by the demo.

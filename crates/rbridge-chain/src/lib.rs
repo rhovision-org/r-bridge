@@ -8,7 +8,7 @@
 
 pub use rcash_chain::error::ChainError;
 pub use rcash_chain::node::{BlockInfo, DeployStatus, ExploreResponse, NodeClient};
-pub use rcash_chain::{KeyPair, SignedDeploy};
+pub use rcash_chain::{DeployOptions, KeyPair, SignedDeploy};
 
 /// A connected rholo node. The inner client is the pinned r-cash implementation; this
 /// wrapper exists so r-bridge's SDK and WASM facade do not depend on r-cash directly.

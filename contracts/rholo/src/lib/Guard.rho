@@ -1,0 +1,43 @@
+// M-of-N secp256k1 verification over a 32-byte digest.
+//
+// The digest is computed by the caller (Bridge) from the canonical r-bridge message.
+// Signatures are DER low-S; keys are 65-byte uncompressed secp256k1 public keys.
+// guardAnySig searches the supplied signatures for one that verifies under a key;
+// guardCount walks the key set and counts keys with at least one valid signature.
+// This lets a relayer omit its signature without leaving a hole in the list.
+
+contract guardAnySig(@digest, @sigs, @j, @key, ret) = {
+  if (j >= sigs.length()) {
+    ret!(false)
+  } else {
+    new verify(`rho:crypto:secp256k1Verify`), vCh in {
+      match sigs.nth(j) {
+        sig => {
+          verify!(digest, sig, key, *vCh) |
+          for (@ok <- vCh) {
+            if (ok) { ret!(true) }
+            else { guardAnySig!(digest, sigs, j + 1, key, *ret) }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract guardCount(@digest, @sigs, @i, @count, @keys, @threshold, ret) = {
+  if (i >= keys.length()) {
+    ret!(count >= threshold)
+  } else {
+    match keys.nth(i) {
+      key => {
+        new anyCh in {
+          guardAnySig!(digest, sigs, 0, key, *anyCh) |
+          for (@any <- anyCh) {
+            if (any) { guardCount!(digest, sigs, i + 1, count + 1, keys, threshold, *ret) }
+            else { guardCount!(digest, sigs, i + 1, count, keys, threshold, *ret) }
+          }
+        }
+      }
+    }
+  }
+} |

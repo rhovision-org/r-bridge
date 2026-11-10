@@ -37,6 +37,21 @@ pub fn to_hex(bytes: &[u8]) -> String {
     out
 }
 
+/// keccak256 of the given bytes. This is the hash used by the attestation digest, the
+/// deposit id and the admin payload; keeping one helper prevents a second implementation
+/// from drifting.
+pub fn keccak256(bytes: &[u8]) -> [u8; 32] {
+    use sha3::{Digest, Keccak256};
+    let mut hasher = Keccak256::new();
+    hasher.update(bytes);
+    hasher.finalize().into()
+}
+
+/// Lowercase hex of [`keccak256`].
+pub fn keccak256_hex(bytes: &[u8]) -> String {
+    to_hex(&keccak256(bytes))
+}
+
 /// Strict lowercase/uppercase hex decoding; odd length and non-hex are refused.
 pub fn from_hex(text: &str) -> Result<Vec<u8>, BridgeError> {
     if !text.len().is_multiple_of(2) || !text.chars().all(|c| c.is_ascii_hexdigit()) {
