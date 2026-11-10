@@ -62,6 +62,8 @@ make mock-relayer             # dev-only HTTP relayer surface on :8099
 make relayer-watch            # dev watcher loop (Anvil -> rholo, rholo -> Anvil)
 make refund-failed            # 2-of-3 admin refund of failed deposits
 make reorg-demo               # safe-head/reorg journal test on its own Anvil
+make deploy-demo              # vault deployment path on its own Anvil (:8547)
+make deploy-sepolia           # Sepolia vault deployment (SEPOLIA_* env, --yes)
 make metrics-demo             # /metrics, /health, /v1/chains on :9110
 make api-demo                 # deposit read API and 404 paths on :9112
 ```

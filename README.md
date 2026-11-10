@@ -11,7 +11,7 @@ sides. It is not a wallet: native accounts stay in MetaMask, TronLink and Keplr.
 | **Which assets?** | Native assets plus USDT/USDC/DAI where each chain has them, chain-qualified. |
 | **What is the trust model?** | Federated m-of-n relayers (2-of-3 to start). The rail they run on is undecided. |
 | **What does it depend on?** | A relayer layer: standalone bridge node or rholo plugin/sidecar — undecided ([issue #563](https://github.com/rhovision-org/rholo/issues/563)). |
-| **Status** | **Phase 1 demo and Phase 2 EVM ↔ rholo cross-chain demo pass on a local rholo devnet + Anvil; the Ethereum/TVM vault passes 10 Foundry tests.** Sepolia/Nile/Agoric and the production relayer are next. No real value moves. |
+| **Status** | **Phase 1 demo and Phase 2 EVM ↔ rholo cross-chain demo pass on a local rholo devnet + Anvil; the Ethereum/TVM vault passes 10 Foundry tests, and profile-driven deployment + manifest verification pass 23 checks on Anvil.** No public-testnet or mainnet deployment yet; Sepolia/Nile/Agoric and the production relayer are next. No real value moves. |
 
 ## Wallets
 
@@ -70,7 +70,7 @@ npm --prefix web run dev
 (cd docs && mdbook serve)
 ```
 
-`make check` runs the Rust, contract, web and docs gates.
+`make check` runs the Rust, contract, deployment, web and docs gates.
 
 ## Run the Phase 1 demo
 
@@ -143,6 +143,22 @@ in-memory signer field, enter a 0x destination, and burn; the relayer unlocks on
 
 Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.md`.
 
+## Deploy a native vault
+
+`tools/deploy_evm.py` deploys `BridgeVault` from a profile in `configs/networks/`, checks
+the chain id and every ERC-20's code and decimals first, reads the deployed configuration
+back from the chain, and writes a gitignored manifest to `deployments/`. `verify`
+re-checks that manifest against the chain; `print-env` emits the web app's settings.
+
+```bash
+make deploy-demo        # rehearses deploy + verify + refusals on its own Anvil (:8547)
+make deploy-sepolia     # SEPOLIA_* env from docs/src/deployment.md; --yes included
+RBRIDGE_RPC_URL="$SEPOLIA_RPC_URL" make verify-sepolia
+```
+
+Mainnet is refused until the external audit, and no public-testnet deployment has been
+performed yet. See `docs/src/deployment.md`.
+
 ## Read the relayer
 
 The SDK exposes the rail-agnostic read API (`RelayerClient`) and the CLI wraps it. With
@@ -165,6 +181,11 @@ distinguishable from an error.
 - Phase 1 rholo demo: PASS (30 checks, including the treasury fee sweep).
 - Phase 2 EVM vault: 10 Foundry tests pass (including a 2-of-3 admin refund); ETH and
   ERC-20 USDT ↔ rholo e2e PASS on Anvil + local devnet.
+- Phase 2 deployment: `make deploy-demo` passes 23 checks on its own Anvil — a
+  profile-driven deploy, on-chain read-back, manifest write/verify/tamper detection, an
+  ERC-20 asset, and refusals for mainnet, non-local chains without `--yes`, chain-id
+  mismatch, missing token code, wrong decimals and missing environment. Sepolia is
+  prepared (`configs/networks/ethereum-sepolia.json`) but not deployed.
 - Dev relayer loop: PASS — deposit watcher mints, withdrawal watcher unlocks and
   completes; failed deposits are journaled and `make refund-failed` returns the native
   funds via the admin refund. The safe-head gate and reorg journal pass

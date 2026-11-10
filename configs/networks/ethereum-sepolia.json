@@ -1,0 +1,42 @@
+{
+  "description": "Ethereum Sepolia. Addresses and the RPC URL come from the environment; never commit operator keys or endpoints.",
+  "network": "rbridge-sepolia",
+  "chainName": "ethereum",
+  "chainId": 11155111,
+  "bridgeId": "rbridge:sepolia:bridge",
+  "rpc": "${SEPOLIA_RPC_URL}",
+  "deployerKeyEnv": "SEPOLIA_DEPLOYER_KEY",
+  "admins": [
+    "${SEPOLIA_ADMIN_1}",
+    "${SEPOLIA_ADMIN_2}",
+    "${SEPOLIA_ADMIN_3}"
+  ],
+  "adminThreshold": 2,
+  "relayers": [
+    "${SEPOLIA_RELAYER_1}",
+    "${SEPOLIA_RELAYER_2}",
+    "${SEPOLIA_RELAYER_3}"
+  ],
+  "relayerThreshold": 2,
+  "treasury": "${SEPOLIA_TREASURY}",
+  "assets": [
+    {
+      "assetKey": "ethereum.eth",
+      "token": "native",
+      "nativeDecimals": 18,
+      "rholoDecimals": 8,
+      "maxDeposit": "1000000000000000000",
+      "maxLocked": "10000000000000000000",
+      "withdrawFeeBps": 5
+    },
+    {
+      "assetKey": "ethereum.usdc",
+      "token": "${SEPOLIA_USDC}",
+      "nativeDecimals": 6,
+      "rholoDecimals": 6,
+      "maxDeposit": "10000000000",
+      "maxLocked": "100000000000",
+      "withdrawFeeBps": 5
+    }
+  ]
+}

@@ -68,9 +68,10 @@ The web demo now reads the live rholo bridge and Anvil vault and locks ETH and U
 vat is tested at the contract level; a live Agoric chain/IBC denoms and an Agoric watcher
 remain.
 
-Not yet covered: Sepolia/Nile deployment, the Agoric vat, reorg handling, finality on a
-multi-validator/testnet, and the production relayer (journal, metrics, packaging,
-bond/slashing). Those are the evidence needed for the rail decision.
+Not yet covered: a public-testnet deployment (the tooling is rehearsed on Anvil, and
+mainnet is refused), a live Agoric chain/IBC denoms and its watcher, finality on a
+multi-validator/testnet, and the production relayer (packaging, bond/slashing). Those
+are the evidence needed for the rail decision.
 
 ## The demo
 

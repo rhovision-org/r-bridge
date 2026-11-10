@@ -88,6 +88,12 @@ cross-chain demo (`make e2e-evm`).
 
 ## Deployment
 
-Sepolia first, only after the relayer add-on decision and an external audit. The
-deployment manifest (`deployments/`) records the vault address, deployment block, asset
-addresses, relayer/admin sets and treasury. No mainnet deployment before audit.
+`script/DeployVault.s.sol` is the generic, environment-driven deployment used by
+`tools/deploy_evm.py`. The tool takes a profile from `configs/networks/`, checks the
+chain id, the ERC-20 code and decimals, broadcasts, reads every parameter back from the
+chain, and writes a gitignored manifest to `deployments/`. `make deploy-demo` rehearses
+the whole path on its own Anvil; `make deploy-sepolia` is the public-testnet command.
+See `docs/src/deployment.md` and `configs/networks/README.md`.
+
+Mainnet is refused by the tool until the external audit. No public-testnet deployment has
+been performed yet.

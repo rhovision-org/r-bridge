@@ -28,6 +28,11 @@ Devnet only. Nothing here is a production relayer, and the keys are worth nothin
 - `api_demo.py` — checks the deposit read API on `:9112`: the journaled state and
   canonical message for a settled deposit, 404 for an unattested dry-run and unknown
   ids, and `/health` staying up.
+- `deploy_demo.py` — rehearses the native-vault deployment path on its own Anvil
+  (:8547): a profile-driven deploy through `tools/deploy_evm.py`, on-chain read-back,
+  manifest verification and tamper detection, an ERC-20 asset deployment, and the
+  refusals (mainnet, non-local without `--yes`, chain-id mismatch, token without code,
+  wrong decimals, missing environment). No rholo node is needed.
 - `dev_relayer.py` — the dev watcher loop. It scans new Anvil `Deposit` logs, decodes
   the event, reads the vault asset config, signs the 2-of-3 deposit digest, and calls
   `Bridge.mint`. It also polls rholo `pendingWithdrawals`, signs the 65-byte withdrawal
@@ -48,6 +53,7 @@ make devnet-up      # local rholo devnet on :40403 (RHOLO_DIR, 8 GB node memory)
 make demo           # build the CLI, install the bridge, run the checks
 make mock-relayer   # HTTP relayer surface on 127.0.0.1:8099
 make e2e-evm        # cross-chain demo; requires Anvil on :8545
+make deploy-demo    # vault deployment path on its own Anvil (:8547)
 make relayer-watch  # dev watcher loop; start it before locking
 make refund-failed  # return native funds for journaled failed deposits
 make reorg-demo     # anvil rollback -> cursor rewind / halt (own Anvil on :8545)

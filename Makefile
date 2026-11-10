@@ -4,7 +4,7 @@ RHOLO_DIR ?= ../RNodeRust
 NODE ?= http://localhost:40403
 FORGE ?= $(HOME)/.foundry/bin/forge
 
-.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build agoric-install agoric-test web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer e2e-evm relayer-watch refund-failed reorg-demo metrics-demo api-demo
+.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build agoric-install agoric-test web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer e2e-evm relayer-watch refund-failed reorg-demo metrics-demo api-demo deploy-demo deploy-sepolia verify-sepolia
 
 fmt:
 	cargo fmt --all --check
@@ -89,7 +89,19 @@ metrics-demo:
 api-demo:
 	$(PY) harness/api_demo.py
 
-check: rust-check contracts-check evm-test web-check docs-check
+# Native vault deployment. The demo starts its own Anvil; Sepolia needs the SEPOLIA_*
+# environment variables from docs/src/deployment.md and a funded testnet key.
+deploy-demo:
+	$(PY) harness/deploy_demo.py
+
+deploy-sepolia:
+	$(PY) tools/deploy_evm.py deploy --profile configs/networks/ethereum-sepolia.json \
+		--out deployments/ethereum-sepolia.json --yes
+
+verify-sepolia:
+	$(PY) tools/deploy_evm.py verify --manifest deployments/ethereum-sepolia.json
+
+check: rust-check contracts-check evm-test deploy-demo web-check docs-check
 
 clean:
 	cargo clean
