@@ -84,6 +84,20 @@ enum Command {
         #[arg(long)]
         digest: String,
     },
+    /// keccak256 a UTF-8 text and sign it in 65-byte r||s||v form for the EVM/TVM vault.
+    SignTextEth {
+        #[arg(long, env = "RBRIDGE_KEY")]
+        key: String,
+        #[arg(long)]
+        text: String,
+    },
+    /// Sign a 32-byte digest (hex) in 65-byte r||s||v form for the EVM/TVM vault.
+    SignDigestEth {
+        #[arg(long, env = "RBRIDGE_KEY")]
+        key: String,
+        #[arg(long)]
+        digest: String,
+    },
     /// Sign and submit a deploy from a term file, then poll to finality.
     Deploy {
         #[arg(long, env = "RBRIDGE_NODE", default_value = "http://localhost:40403")]
@@ -156,6 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "secret": key.secret_hex(),
                     "public": key.public_hex(),
                     "rev_address": key.rev_address()?,
+                    "eth_address": rbridge_chain::eth_address(&key)?,
                 }))?
             );
         }
@@ -166,6 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&json!({
                     "public": key.public_hex(),
                     "rev_address": key.rev_address()?,
+                    "eth_address": rbridge_chain::eth_address(&key)?,
                 }))?
             );
         }
@@ -194,6 +210,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&json!({
                     "signature": to_hex(&signature),
                     "public": key.public_hex(),
+                }))?
+            );
+        }
+        Command::SignTextEth { key, text } => {
+            let key = KeyPair::from_secret_hex(&key)?;
+            let digest = keccak256(text.as_bytes());
+            let signature = rbridge_chain::sign_eth_prehash(&key, &digest)?;
+            println!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "digest": to_hex(&digest),
+                    "signature": to_hex(&signature),
+                    "address": rbridge_chain::eth_address(&key)?,
+                }))?
+            );
+        }
+        Command::SignDigestEth { key, digest } => {
+            let key = KeyPair::from_secret_hex(&key)?;
+            let digest = from_hex(&digest)?;
+            if digest.len() != 32 {
+                return Err("digest must be 32 bytes".into());
+            }
+            let signature = rbridge_chain::sign_eth_prehash(&key, &digest)?;
+            println!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "signature": to_hex(&signature),
+                    "address": rbridge_chain::eth_address(&key)?,
                 }))?
             );
         }

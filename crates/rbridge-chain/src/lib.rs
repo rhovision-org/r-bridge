@@ -8,7 +8,32 @@
 
 pub use rcash_chain::error::ChainError;
 pub use rcash_chain::node::{BlockInfo, DeployStatus, ExploreResponse, NodeClient};
-pub use rcash_chain::{DeployOptions, KeyPair, SignedDeploy};
+pub use rcash_chain::{eth_address_from_public_key, DeployOptions, KeyPair, SignedDeploy};
+
+/// The 20-byte Ethereum address (lowercase hex, no `0x`) of a key. The same key addresses
+/// both Ethereum and rholo; the vault and the rholo ledger use different representations.
+pub fn eth_address(key: &KeyPair) -> Result<String, ChainError> {
+    eth_address_from_public_key(key.public_bytes())
+}
+
+/// Sign a 32-byte digest in the 65-byte `r || s || v` form the EVM/TVM vault recovers.
+/// This is the counterpart of [`KeyPair::sign_prehash`], which produces DER for rholo.
+pub fn sign_eth_prehash(key: &KeyPair, digest: &[u8]) -> Result<[u8; 65], ChainError> {
+    use k256::ecdsa::SigningKey;
+    if digest.len() != 32 {
+        return Err(ChainError::Crypto(format!(
+            "prehash is {} bytes, expected 32",
+            digest.len()
+        )));
+    }
+    let signing = SigningKey::from_slice(key.secret_bytes())
+        .map_err(|e| ChainError::Crypto(e.to_string()))?;
+    let (signature, recovery) = signing.sign_prehash_recoverable(digest);
+    let mut out = [0u8; 65];
+    out[..64].copy_from_slice(&signature.to_bytes());
+    out[64] = recovery.to_byte() + 27;
+    Ok(out)
+}
 
 /// A connected rholo node. The inner client is the pinned r-cash implementation; this
 /// wrapper exists so r-bridge's SDK and WASM facade do not depend on r-cash directly.
@@ -89,5 +114,26 @@ mod tests {
         assert!(key.verify_prehash(&digest, &sig));
         assert_ne!(key.public_hex().len(), 0);
         assert!(key.rev_address().is_ok());
+    }
+
+    #[test]
+    fn eth_signature_recovers_to_the_eth_address() {
+        use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+
+        let key = KeyPair::from_secret_hex(
+            "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76",
+        )
+        .expect("key");
+        let digest = [9_u8; 32];
+        let sig = sign_eth_prehash(&key, &digest).expect("sign");
+        assert!(sig[64] == 27 || sig[64] == 28);
+        let signature = Signature::from_slice(&sig[..64]).expect("r||s");
+        let recovery = RecoveryId::from_byte(sig[64] - 27).expect("recovery");
+        let recovered =
+            VerifyingKey::recover_from_prehash(&digest, &signature, recovery).expect("recover");
+        let expected = eth_address(&key).expect("address");
+        let actual = eth_address_from_public_key(recovered.to_sec1_point(false).as_bytes())
+            .expect("address");
+        assert_eq!(actual, expected);
     }
 }

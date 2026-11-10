@@ -98,6 +98,22 @@ b21892a96916dfd84579a2d31b6e64db43a6e8d1e94e5e360f8dea608bbd0a22
 implementations must reproduce it in their own test suites before any testnet
 deployment.
 
+Withdrawal vector (EVM/Tron; the recipient is the lowercase `0x` form, not base58):
+
+```
+rbridge:v1|rbridge-devnet|ethereum|rbridge:devnet:bridge|ethereum.usdt|withdraw|demo-withdrawal-1|1000000|0x000000000000000000000000000000000000beef|0
+```
+
+Digest:
+
+```
+d2f0ca0220d37d6a5cb5f3061140f864b967f6d7fe3596f1f330faeba263e805
+```
+
+The EVM test `testWithdrawalDigestMatchesRustGolden` pins this value; the rholo and Agoric
+implementations must reproduce it as well. For a Tron destination, `recipient` is the
+lowercase `0x` form of the Tron address; base58 is display-only.
+
 ## Versioning
 
 The `rbridge:v1` tag is part of the signed bytes. Any change to field order, separators,

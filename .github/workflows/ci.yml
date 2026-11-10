@@ -23,6 +23,15 @@ jobs:
       - run: cargo check -p rbridge-wasm --target wasm32-unknown-unknown
       - run: python3 tools/build_contracts.py --check
 
+  evm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: "v1.9.0"
+      - run: forge test --root contracts/evm -vv
+
   web:
     runs-on: ubuntu-latest
     steps:

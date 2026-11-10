@@ -4,7 +4,7 @@
 |---|---|---|
 | 0 | Repo, scaffold, specs, node issue | this repository builds; issue #563 is open |
 | 1 | rholo bridge contract + devnet | **Demo passes (2026-11-10):** a single Bridge contract + Guard/Ledger libs installed on a local devnet; 22 checks cover mint, burn, transfer, replay, threshold refusal, unknown asset, pause and conservation. The BridgeRoot/WrappedToken split is the production target, not yet done. |
-| 2 | Native contracts | Ethereum vault on Sepolia, Tron vault on Nile, Agoric vat on a local chain with mocked IBC denoms; shared digest vectors pass on all three |
+| 2 | Native contracts | **Ethereum/TVM vault implemented (2026-11-10): 9 Foundry tests pass, including the shared Rust/EVM withdrawal digest golden vector.** Sepolia deployment, Tron/Nile TVM tests and the Agoric vat with mocked IBC denoms are next. |
 | 3 | Relayer implementation | rail chosen after the demo; watchers/signers/submitters + journal + metrics; 2-of-3 local devnet, then testnets |
 | 4 | Web dApp | MetaMask/TronLink/Keplr integration, portfolio, bridge/withdraw, activity; Playwright e2e |
 | 5 | Hardening | public testnets, fee/bond/cap tuning, external audit, incident runbooks, OCapN production path |

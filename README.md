@@ -11,7 +11,7 @@ sides. It is not a wallet: native accounts stay in MetaMask, TronLink and Keplr.
 | **Which assets?** | Native assets plus USDT/USDC/DAI where each chain has them, chain-qualified. |
 | **What is the trust model?** | Federated m-of-n relayers (2-of-3 to start). The rail they run on is undecided. |
 | **What does it depend on?** | A relayer layer: standalone bridge node or rholo plugin/sidecar — undecided ([issue #563](https://github.com/rhovision-org/rholo/issues/563)). |
-| **Status** | **Phase 1 demo passes on a local rholo devnet.** The rholo bridge contract, mock 2-of-3 relayer and end-to-end checks run; native-chain vaults are next. No real value moves. |
+| **Status** | **Phase 1 demo passes on a local rholo devnet; Phase 2 Ethereum/TVM vault passes 9 tests.** Tron deployment and the Agoric vat are next. No real value moves. |
 
 ## Wallets
 
@@ -47,7 +47,8 @@ the choice. See `docs/src/infrastructure-decision.md`.
 | Rust primitives | `crates/rbridge-{core,chain,sdk,cli,wasm}` |
 | Web dApp | `web/` |
 | Rholang bridge contract (demo) | `contracts/rholo/` |
-| Native vaults/vat (planned) | `contracts/{evm,tron,agoric}/` |
+| Ethereum/TVM vault | `contracts/evm/` (Tron reuse in `contracts/tron/`) |
+| Agoric vat (planned) | `contracts/agoric/` |
 | Dev harness + mock relayer | `harness/` |
 | Specs | `spec/` |
 | Book | `docs/` |
@@ -69,7 +70,8 @@ npm --prefix web run dev
 ## Run the Phase 1 demo
 
 Prereqs: Docker, a local rholo checkout at `~/RNodeRust` (override with
-`RHOLO_DIR=...`), and the Rust toolchain.
+`RHOLO_DIR=...`), and the Rust toolchain. The EVM vault tests also need Foundry; the
+Makefile expects it at `~/.foundry/bin/forge` (override with `FORGE=...`).
 
 ```bash
 make devnet-up    # starts a 1-validator local devnet (8 GB node memory) on :40403

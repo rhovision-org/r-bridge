@@ -28,7 +28,7 @@ signature is not something those wallets can produce.
 | `rbridge-wasm` | `crates/rbridge-wasm` | rholo key, REV address, digest signing, scaling for the web app |
 | web | `web/` | wallet connectors, portfolio, bridge/withdraw forms, activity |
 | rholo contracts | `contracts/rholo` | Phase 1 demo: one Bridge contract + Guard/Ledger libs; the split suite is the production target |
-| native contracts | `contracts/{evm,tron,agoric}` | vault / TVM vault / Agoric vat |
+| native contracts | `contracts/{evm,tron,agoric}` | Ethereum/TVM vault implemented and tested; Agoric vat planned |
 | relayer implementation | external (rail undecided) | watchers, attestation signers, mint/unlock submission |
 | mock relayer | `harness/` | dev-only stand-in for the relayer during the demo |
 

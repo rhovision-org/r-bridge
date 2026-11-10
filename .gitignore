@@ -4,6 +4,9 @@
 *.pyc
 web/dist
 docs/book
+contracts/evm/out/
+contracts/evm/cache/
+contracts/evm/broadcast/
 .devnet/
 deployments/*.json
 !deployments/README.md

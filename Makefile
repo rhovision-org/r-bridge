@@ -2,8 +2,9 @@ SHELL := /bin/bash
 PY ?= python3
 RHOLO_DIR ?= ../RNodeRust
 NODE ?= http://localhost:40403
+FORGE ?= $(HOME)/.foundry/bin/forge
 
-.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer
+.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer
 
 fmt:
 	cargo fmt --all --check
@@ -24,6 +25,12 @@ build-contracts:
 
 contracts-check:
 	python3 tools/build_contracts.py --check
+
+evm-build:
+	$(FORGE) build --root contracts/evm
+
+evm-test:
+	$(FORGE) test --root contracts/evm -vv
 
 web-install:
 	npm --prefix web install
@@ -56,7 +63,7 @@ demo: build-contracts
 mock-relayer:
 	$(PY) harness/mock_relayer.py
 
-check: rust-check contracts-check web-check docs-check
+check: rust-check contracts-check evm-test web-check docs-check
 
 clean:
 	cargo clean

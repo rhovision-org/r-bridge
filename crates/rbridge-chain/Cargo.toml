@@ -19,3 +19,4 @@ wasm = ["rcash-chain/wasm"]
 rbridge-core = { workspace = true }
 rcash-chain = { workspace = true, default-features = false }
 serde_json = { workspace = true }
+k256 = { workspace = true }

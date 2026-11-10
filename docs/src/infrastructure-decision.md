@@ -49,9 +49,11 @@ below-threshold refusal, burn, withdrawal completion, transfer, pause/unpause an
 conservation. `make mock-relayer` exposes the read interface from
 `spec/relayer-interface.md`.
 
-Not yet covered: native vaults (Ethereum/Tron/Agoric), real chain watching, finality on
-a multi-validator/testnet, reorg handling, and the production relayer. Those are the
-evidence needed for the rail decision.
+The Ethereum/TVM vault is also implemented and passes 9 Foundry tests, including a
+withdrawal digest shared with the Rust signer. Not yet covered: Sepolia/Nile deployment,
+the Agoric vat, real chain watching, finality on a multi-validator/testnet, reorg
+handling, and the production relayer. Those are the evidence needed for the rail
+decision.
 
 ## The demo
 
