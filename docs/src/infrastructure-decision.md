@@ -60,18 +60,22 @@ The dev watcher loop also passes: a new Anvil deposit is decoded and minted on r
 automatically, and a new rholo burn is unlocked and completed on Anvil automatically
 (2-of-3, fixed dev keys). Its safe-head gate and reorg journal pass `make reorg-demo`:
 an unprocessed rollback rewinds the cursor, and a rollback that removes a settled
-deposit halts for reconciliation. `make metrics-demo` checks the Prometheus, health and
-chains endpoints, including while halted. That makes the watcher/attester/submitter work
-concrete.
-The web demo now reads the live rholo bridge and Anvil vault and locks ETH and USDT
-(approve + lock) through MetaMask, so the user-facing loop is observable end to end. The Agoric Zoe escrow/release
-vat is tested at the contract level; a live Agoric chain/IBC denoms and an Agoric watcher
-remain.
+deposit halts for reconciliation. `make metrics-demo` and `make api-demo` check the
+Prometheus, health, chains and journal endpoints, including while halted. That makes the
+watcher/attester/submitter work concrete.
+
+The web demo reads the live rholo bridge and Anvil vault, locks ETH and USDT (approve +
+lock) through MetaMask, builds TronLink TRX/TRC-20 deposits, follows deposits and
+withdrawals through the relayer read API, and signs a rholo burn in WASM. The native-vault
+deployment path is rehearsed on Anvil: profile → deploy → on-chain read-back → gitignored
+manifest → `verify` (23 checks). Mainnet is refused. The Agoric Zoe escrow/release vat is
+tested at the contract level; a live Agoric chain/IBC denoms and an Agoric watcher remain.
 
 Not yet covered: a public-testnet deployment (the tooling is rehearsed on Anvil, and
-mainnet is refused), a live Agoric chain/IBC denoms and its watcher, finality on a
-multi-validator/testnet, and the production relayer (packaging, bond/slashing). Those
-are the evidence needed for the rail decision.
+mainnet is refused), a live Agoric chain/IBC denoms and its watcher, a Tron/TVM
+deployment and watcher, finality on a multi-validator/testnet, and the production relayer
+(packaging, bond/slashing, fee distribution). Those are the evidence needed for the rail
+decision.
 
 ## The demo
 

@@ -1,11 +1,17 @@
 # Deploy terms
 
-Phase 1 writes the installer and deploy terms here:
+The current deploy term is one file:
 
-- `00_bridge_root.rho`
-- `10_wrapped_token.rho`
-- `20_bridge.rho`
+- `00_bridge.rho` — the single-demo `Bridge` contract (mint, burn, transfer, balances,
+  withdrawals, admin, fee sweep).
 
-Each term is rendered from a template with the network, treasury address, admin set,
-relayer set, threshold, asset registry and fee/cap parameters. Generated terms are measured against
-the 56 KiB budget and parsed with the target node before they are committed.
+`tools/build_contracts.py` inlines the libraries from `../lib` and writes the generated
+term to `contracts/rholo/build/00_bridge.rho`, which is committed and must not be
+hand-edited. `harness/render.py` then fills the deployment placeholders (network, bridge
+id, admin/relayer sets, thresholds, treasury, asset registry) at install time. The
+generated term is measured against the 56 KiB budget and parsed with the target node in
+the demo.
+
+The production target is a split suite (`BridgeRoot.rho`, `WrappedToken.rho`,
+`Bridge.rho`, `Attestation.rho`); it is not implemented yet. See
+`../../README.md`.

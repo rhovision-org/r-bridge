@@ -1,3 +1,10 @@
+# Appendix: node add-on proposal (historical)
+
+> **Historical snapshot.** This is the text of the node add-on proposal raised as
+> [rhovision-org/rholo#563](https://github.com/rhovision-org/rholo/issues/563). It records
+> the proposal as written, not current implementation status. For what exists today, see
+> [Relayer](../relayer.md) and [Current limitations](../limitations.md).
+
 ## Summary
 
 `r-bridge` is a bridge dApp that will move assets between rholo and Cosmos/Agoric, Ethereum and Tron (USDT/USDC/DAI where each chain has them; Hyperliquid later). The rholo side can lock, mint, burn and verify signatures in rholang, but it cannot watch foreign chains or broadcast foreign transactions. Today that job has no owner in the node stack.

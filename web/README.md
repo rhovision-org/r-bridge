@@ -1,8 +1,9 @@
 # r-bridge web
 
 React 18 + Vite + TypeScript. The app is a bridge dApp, not a wallet: MetaMask owns the
-Ethereum account, TronLink/Keplr own their chains, and the rholo signer is a separate
-module (next phase).
+Ethereum account, TronLink/Keplr own their chains, and the rholo account is a Web3 v3
+keystore decrypted in WASM. The full behaviour and gaps are documented in the book's
+[Web dApp](../docs/src/web-app.md) chapter.
 
 ## What is live
 

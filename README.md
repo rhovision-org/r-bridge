@@ -11,7 +11,26 @@ sides. It is not a wallet: native accounts stay in MetaMask, TronLink and Keplr.
 | **Which assets?** | Native assets plus USDT/USDC/DAI where each chain has them, chain-qualified. |
 | **What is the trust model?** | Federated m-of-n relayers (2-of-3 to start). The rail they run on is undecided. |
 | **What does it depend on?** | A relayer layer: standalone bridge node or rholo plugin/sidecar — undecided ([issue #563](https://github.com/rhovision-org/rholo/issues/563)). |
-| **Status** | **Phase 1 demo and Phase 2 EVM ↔ rholo cross-chain demo pass on a local rholo devnet + Anvil; the Ethereum/TVM vault passes 10 Foundry tests, and profile-driven deployment + manifest verification pass 23 checks on Anvil.** No public-testnet or mainnet deployment yet; Sepolia/Nile/Agoric and the production relayer are next. No real value moves. |
+| **Status** | **Phase 1 demo and Phase 2 EVM ↔ rholo cross-chain demo pass on a local rholo devnet + Anvil; the Ethereum/TVM vault passes 10 Foundry tests, and profile-driven deployment + manifest verification pass 23 checks on Anvil.** No public-testnet or mainnet deployment yet; see [Current limitations](docs/src/limitations.md). **No real value moves.** |
+
+## Documentation
+
+The [mdBook](docs/src/SUMMARY.md) is the detailed reference; `spec/` is normative. Build
+or serve it locally with `cd docs && mdbook serve`.
+
+| Chapter | Covers |
+|---|---|
+| [Introduction](docs/src/introduction.md) | scope, status at a glance, safety gates |
+| [Architecture](docs/src/architecture.md) | components, identities, current vs planned contracts |
+| [Flows](docs/src/flows.md) | deposit, withdraw, refund, admin, failure paths |
+| [Security model](docs/src/security.md) | assumptions, threats, key separation, audit scope |
+| [Relayer](docs/src/relayer.md) | dev watcher, read API, metrics, dev-vs-production gaps |
+| [Node operator guide](docs/src/operator-guide.md) | hardware, economics, keys, incident runbook |
+| [Web dApp](docs/src/web-app.md) | wallets, keystore, settings, flows, web limitations |
+| [Deployment](docs/src/deployment.md) | rholo install, profiles, manifests, Sepolia runbook |
+| [Testing and verification](docs/src/testing.md) | every suite, what it proves, what it does not |
+| [Current limitations](docs/src/limitations.md) | the consolidated, grouped gap list |
+| [Roadmap](docs/src/roadmap.md) and [infrastructure decision](docs/src/infrastructure-decision.md) | phases and the open relayer-rail choice |
 
 ## Wallets
 
@@ -22,7 +41,8 @@ r-bridge uses what the user already has:
   the connected account, and a key exported from MetaMask can be encrypted into a rholo
   keystore (Settings) so it signs deploys too.
 - **TronLink** for Tron accounts and TRC-20 calls.
-- **Keplr** for Cosmos/Agoric accounts and Zoe/IBC offers.
+- **Keplr** for Cosmos/Agoric accounts. Account connection exists; Zoe/IBC writes are
+  not wired yet.
 - **r-bridge's own WASM keystore** only for the rholo account, because MetaMask cannot
   sign the node's deploy preimage (BLAKE2b-256 protobuf, `shardId` field 11,
   `{prehash:false}`). It is a Web3 v3 file (scrypt + AES-128-CTR) that opens in
@@ -43,18 +63,18 @@ that is deliberately rail-agnostic: the attestation format, bridge contracts, dA
 CLI do not assume which rail wins. A mock relayer stands in for the real one. The demo,
 and the discussion in
 [rhovision-org/rholo#563](https://github.com/rhovision-org/rholo/issues/563), will inform
-the choice. See `docs/src/infrastructure-decision.md`.
+the choice. See [Infrastructure decision](docs/src/infrastructure-decision.md).
 
 ## Repository map
 
 | Area | Path |
 |---|---|
-| Rust primitives | `crates/rbridge-{core,chain,sdk,cli,wasm}` |
+| Rust primitives | `crates/rbridge-{core,chain,sdk,cli,keystore,wasm}` |
 | Web dApp | `web/` |
 | Rholang bridge contract (demo) | `contracts/rholo/` |
 | Ethereum/TVM vault | `contracts/evm/` (Tron reuse in `contracts/tron/`) |
 | Agoric escrow vat (Zoe) | `contracts/agoric/` |
-| Dev harness + mock relayer | `harness/` |
+| Dev harness, mock and watcher | `harness/` |
 | Specs | `spec/` |
 | Book | `docs/` |
 | Network configs | `configs/` |
@@ -157,7 +177,7 @@ RBRIDGE_RPC_URL="$SEPOLIA_RPC_URL" make verify-sepolia
 ```
 
 Mainnet is refused until the external audit, and no public-testnet deployment has been
-performed yet. See `docs/src/deployment.md`.
+performed yet. See [Deployment](docs/src/deployment.md).
 
 ## Read the relayer
 
@@ -178,53 +198,75 @@ distinguishable from an error.
 
 ## Current status
 
-- Phase 1 rholo demo: PASS (30 checks, including the treasury fee sweep).
-- Phase 2 EVM vault: 10 Foundry tests pass (including a 2-of-3 admin refund); ETH and
-  ERC-20 USDT ↔ rholo e2e PASS on Anvil + local devnet.
-- Phase 2 deployment: `make deploy-demo` passes 23 checks on its own Anvil — a
-  profile-driven deploy, on-chain read-back, manifest write/verify/tamper detection, an
-  ERC-20 asset, and refusals for mainnet, non-local chains without `--yes`, chain-id
-  mismatch, missing token code, wrong decimals and missing environment. Sepolia is
-  prepared (`configs/networks/ethereum-sepolia.json`) but not deployed.
+Evidence as of 2026-11-10. Every count below is a named suite; the full table, including
+what each suite cannot prove, is in
+[Testing and verification](docs/src/testing.md).
+
+- Phase 1 rholo demo: PASS, 30 checks (mint, replay, below-threshold, burn, withdrawal,
+  transfer, pause, treasury fee sweep, conservation).
+- Phase 2 EVM vault: 10 Foundry tests pass; ETH and ERC-20 USDT ↔ rholo e2e PASS on
+  Anvil + local devnet; failed deposits are journaled and refunded.
+- Phase 2 deployment: `make deploy-demo` passes 23 checks on its own Anvil. Sepolia is
+  prepared but not deployed.
 - Dev relayer loop: PASS — deposit watcher mints, withdrawal watcher unlocks and
-  completes; failed deposits are journaled and `make refund-failed` returns the native
-  funds via the admin refund. The safe-head gate and reorg journal pass
-  `make reorg-demo`: an unprocessed rollback rewinds, a reorged settled deposit halts.
-  `make metrics-demo` checks `/metrics`, `/health` and `/v1/chains`, including the
-  halted state staying scrapeable.
-- Relayer read client: `RelayerClient` in the SDK and `rbridge relayer
-  health|chains|deposit|withdrawal|attestation` in the CLI. 8 client tests (both chain
-  shapes, 404-to-null, HTTP errors, path-safe ids) pass; the CLI was exercised live
-  against `make mock-relayer` (health, chains, deposit and attestation). The dev watcher
-  now serves `/v1/deposits/{id}`, `/attestation` and `/v1/withdrawals/{id}` from its
-  journal, and the web app follows a lock and a burn through that API (Bridge shows the
-  relayer state for both directions; Overview shows a relayer card). `make api-demo`
-  checks the endpoints.
-- Web demo: live rholo bridge/vault reads, MetaMask ETH and USDT locks (approve +
-  lock), TronLink TRX/TRC-20 deposits against the TVM vault, a WASM-signed rholo burn
-  for withdraw that then follows the relayer to the native unlock, and rholo keystore
-  create/import/load (Web3 v3, r-wallet compatible; save to device or keep an encrypted
-  copy in the browser; MetaMask keys work as rholo keys); 46 unit + 9 Playwright browser
-  tests + 5 opt-in live tests pass, and a Node smoke test signs and submits a burn
-  through the wasm client.
-- Agoric vat: Zoe escrow/release contract passes deposit, 2-of-3 release, replay,
-  below-threshold and wrong-digest tests. No live Agoric chain/IBC or Agoric watcher yet.
-- Not yet: Sepolia/Nile deployment, live Agoric/IBC, multi-validator/testnet finality,
-  production relayer, Tron watcher/withdrawals, Keplr writes, a MetaMask Snap for direct
-  rholo signing.
+  completes; safe-head/reorg handling passes `make reorg-demo`; `/metrics`, `/health`,
+  `/v1/chains` and the journal reads pass `metrics-demo` and `api-demo`.
+- Web dApp: 46 unit + 9 Playwright + 5 opt-in live tests pass; MetaMask and TronLink
+  deposits, relayer tracking, WASM-signed burn and the Web3 v3 keystore are wired.
+- Agoric vat: Zoe escrow/release passes deposit, 2-of-3 release, replay,
+  below-threshold and wrong-digest tests. No live chain.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its
 gate; testnet/production must additionally require finality.
 
-## Documents
+## Current limitations
 
-- `spec/attestation.md` — the cross-chain message and signature format.
-- `spec/assets.md` — the initial asset registry and amount scaling.
-- `spec/invariants.md` — conservation, idempotency, auth and finality rules.
-- `spec/keystore.md` — the Web3 v3 rholo keystore format, interop and import limits.
-- `spec/relayer-interface.md` — the boundary between r-bridge and the node add-on.
-- `docs/src/architecture.md`, `docs/src/flows.md`, `docs/src/roadmap.md`.
+This is a summary; the consolidated, grouped list with "what unblocks it" is
+[Current limitations](docs/src/limitations.md). Nothing here moves real value.
+
+**Safety gates.** No external audit has been performed, and `tools/deploy_evm.py`
+refuses mainnet chain ids with no override. Devnet keys are throwaway. There is no
+production relayer in this repository.
+
+**Architecture.** The rholo side is a single demo `Bridge` contract; the
+`BridgeRoot`/`WrappedToken` split is planned. The deployed contract and vault fix the
+relayer/admin sets at deployment, so a key change is a redeploy. There is no ERTP adapter
+and no relayer fee distribution.
+
+**Relayer.** The rail is undecided ([issue #563](https://github.com/rhovision-org/rholo/issues/563)).
+The implemented watcher is dev-only, with fixed keys, a JSON journal, no bond/slashing,
+no conflict detection and no Tron or Agoric settlement.
+
+**Chains.** Ethereum is tested on Anvil only. Tron has no deployment, TVM tests, watcher
+or withdrawals, and Tron deposits are not minted in the demo. Agoric has only a locally
+tested vat: no live chain, IBC denoms, Keplr writes or watcher. Hyperliquid and Bitcoin
+have no code.
+
+**Web dApp.** No Keplr writes, no MetaMask Snap, no Tron withdrawals; USDC/DAI are
+read-only until a deployment includes them; the keystore is unaudited.
+
+**Finality and testnets.** No public-testnet run has been performed; Sepolia needs a
+funded key and operator addresses, Nile needs a TronWeb deployment, Agoric needs IST and a
+live chain. The interactive dev watcher defaults to zero confirmations.
+
+**Assets and parameters.** The registry is a plan; only Ethereum ETH and USDT are
+exercised end to end here. Fees/caps are testnet values. The deploy budget is 64 KiB
+(56 KiB planning), currently ~15.5 KiB.
+
+## Specifications
+
+The normative specs live in `spec/` and are included verbatim in the book's
+[Reference](docs/src/reference/attestation.md) section.
+
+- [`spec/attestation.md`](spec/attestation.md) — canonical message, signatures, golden
+  vectors.
+- [`spec/assets.md`](spec/assets.md) — registry and amount scaling.
+- [`spec/invariants.md`](spec/invariants.md) — conservation, idempotency, authority,
+  finality.
+- [`spec/keystore.md`](spec/keystore.md) — Web3 v3 rholo keystore format and interop.
+- [`spec/relayer-interface.md`](spec/relayer-interface.md) — the boundary between
+  r-bridge and the node add-on.
 
 ## License
 

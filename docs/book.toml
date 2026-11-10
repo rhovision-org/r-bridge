@@ -6,3 +6,7 @@ src = "src"
 
 [build]
 build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/rhovision-org/r-bridge"
+edit-url-template = "https://github.com/rhovision-org/r-bridge/edit/main/{path}"

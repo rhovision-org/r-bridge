@@ -93,4 +93,5 @@ jobs:
       - uses: peaceiris/actions-mdbook@v2
         with:
           mdbook-version: "0.5.4"
+      - run: python3 tools/check_docs.py
       - run: mdbook build docs

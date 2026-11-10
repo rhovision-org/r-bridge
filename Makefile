@@ -49,10 +49,8 @@ web-check: web-install
 web-e2e: web-install
 	npm --prefix web run test:e2e
 
-docs:
-	cd docs && mdbook build
-
-docs-check:
+docs docs-check:
+	$(PY) tools/check_docs.py
 	cd docs && mdbook build
 
 # Local demo rails. The rholo devnet is Docker-based and lives in RHOLO_DIR.

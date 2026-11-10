@@ -13,6 +13,11 @@ The authoritative table is `crates/rbridge-core/src/asset.rs` (`initial_registry
 This is the planning record; native contract addresses are filled by each deployment
 manifest and verified at deploy time.
 
+The **Status** column describes the registry entry, not a deployment: `active` means the
+asset is in the planned initial registry; `disabled` means it waits on a denom. Only
+Ethereum ETH and USDT are exercised end-to-end in this repository today; a wrapped symbol
+exists once a native vault/vat for it is deployed and registered.
+
 | Chain | Asset | Wrapped symbol | Native decimals | rholo decimals | Fee (deposit/withdraw) | Status |
 |---|---|---|---|---|---|---|
 | Ethereum | ETH | wETH | 18 | 8 | 5/5 bps | active |
