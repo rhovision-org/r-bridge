@@ -55,9 +55,13 @@ the local rholo devnet: lock 0.1 ETH → 2-of-3 deposit attestation → rholo mi
 0.05 ETH worth → 2-of-3 65-byte EVM signatures → native unlock with fee/scale
 accounting. The harness performs the watcher/attester/submitter steps manually.
 
-Not yet covered: Sepolia/Nile deployment, the Agoric vat, real chain watching, finality
-on a multi-validator/testnet, reorg handling, and the production relayer. Those are the
-evidence needed for the rail decision.
+The dev watcher loop also passes: a new Anvil deposit is decoded and minted on rholo
+automatically, and a new rholo burn is unlocked and completed on Anvil automatically
+(2-of-3, fixed dev keys). That makes the watcher/attester/submitter work concrete.
+
+Not yet covered: Sepolia/Nile deployment, the Agoric vat, reorg handling, finality on a
+multi-validator/testnet, and the production relayer (journal, metrics, packaging,
+bond/slashing). Those are the evidence needed for the rail decision.
 
 ## The demo
 

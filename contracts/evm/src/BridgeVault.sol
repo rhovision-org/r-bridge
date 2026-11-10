@@ -140,6 +140,7 @@ contract BridgeVault {
         AssetConfig memory config = assets[token];
         require(config.enabled, "asset");
         require(amount > 0 && amount <= config.maxDeposit, "amount");
+        require(amount % config.scale == 0, "scale");
         require(bytes(rholoRecipient).length > 0, "recipient");
         require(!usedDepositNonce[msg.sender][nonce], "nonce");
         usedDepositNonce[msg.sender][nonce] = true;

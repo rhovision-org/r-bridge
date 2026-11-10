@@ -198,6 +198,14 @@ def main() -> int:
         ANVIL_RPC,
     )
     after = int(cast("balance", ANVIL_TO, "--rpc-url", ANVIL_RPC))
+    completed = demo.call_write(
+        bridge["uri"],
+        f'Bridge!("completeWithdrawal", "{withdrawal_id}", "{unlock_tx["transactionHash"]}", *ret)',
+        deployer["secret"],
+        "evm_complete.rho",
+    )
+    print(f"{'PASS' if completed == (True,) else 'FAIL'}  rholo withdrawal complete: {completed!r}")
+
     native_gross = gross * 10_000_000_000  # 1e10 wei per rholo unit
     native_fee = native_gross * 5 // 10_000
     expected_net = native_gross - native_fee
@@ -211,7 +219,7 @@ def main() -> int:
     print(f"{'PASS' if locked == expected_locked else 'FAIL'}  vault locked: {locked} (expected {expected_locked})")
     print(f"{'PASS' if fees == expected_fees else 'FAIL'}  vault fees: {fees} (expected {expected_fees})")
 
-    ok = got == expected_net and locked == expected_locked and fees == expected_fees
+    ok = got == expected_net and locked == expected_locked and fees == expected_fees and completed == (True,)
     print()
     print("e2e evm<->rholo:", "PASS" if ok else "FAIL")
     return 0 if ok else 1

@@ -57,6 +57,7 @@ make check                    # all of the above
 make devnet-up                # local rholo devnet (Docker, RHOLO_DIR)
 make demo                     # Phase 1 end-to-end demo (devnet only)
 make mock-relayer             # dev-only HTTP relayer surface on :8099
+make relayer-watch            # dev watcher loop (Anvil -> rholo, rholo -> Anvil)
 ```
 
 ## Status labels

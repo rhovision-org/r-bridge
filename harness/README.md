@@ -15,7 +15,13 @@ Devnet only. Nothing here is a production relayer, and the keys are worth nothin
   `/v1/deposits/{id}/attestation`. It watches no chain; it attests what it is told.
 - `e2e_evm.py` — the cross-chain demo: deploys `BridgeVault` to Anvil, locks 0.1 ETH,
   attests the deposit with 2-of-3 relayer signatures, mints on rholo, burns 0.05 ETH
-  worth, signs the withdrawal in 65-byte EVM form, and calls `unlock`.
+  worth, signs the withdrawal in 65-byte EVM form, calls `unlock`, and completes the
+  rholo withdrawal.
+- `dev_relayer.py` — the dev watcher loop. It scans new Anvil `Deposit` logs, decodes
+  the event, reads the vault asset config, signs the 2-of-3 deposit digest, and calls
+  `Bridge.mint`. It also polls rholo `pendingWithdrawals`, signs the 65-byte withdrawal
+  digest, calls `vault.unlock`, and marks the withdrawal complete. Start it before
+  locking; it ignores pre-existing pending withdrawals.
 - `.devnet/` — generated keys (`demo-keys.json`, mode 600), the installed bridge URI,
   the Anvil vault address, rendered terms and transient files. Gitignored.
 
@@ -26,6 +32,7 @@ make devnet-up      # local rholo devnet on :40403 (RHOLO_DIR, 8 GB node memory)
 make demo           # build the CLI, install the bridge, run the checks
 make mock-relayer   # HTTP relayer surface on 127.0.0.1:8099
 make e2e-evm        # cross-chain demo; requires Anvil on :8545
+make relayer-watch  # dev watcher loop; start it before locking
 make devnet-down
 ```
 
@@ -44,6 +51,9 @@ them, so a re-run installs a fresh bridge at a new URI and repeats the checks.
 - `e2e_evm.py` proves the cross-chain loop on Anvil + the local devnet: native lock,
   2-of-3 deposit attestation, rholo mint, rholo burn, 65-byte EVM signatures, and the
   native unlock with the vault's scale/fee accounting.
+- `dev_relayer.py` proves the watcher loop: a new Anvil deposit is decoded and minted
+  automatically, and a new rholo burn is unlocked and completed automatically. The
+  withdrawal watcher ignores records that were already pending at startup.
 
 ## What it does not prove
 

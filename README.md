@@ -103,12 +103,26 @@ after a 2-of-3 attestation, burns 0.05 ETH worth, and unlocks 49,975,000,000,000
 (0.049975 ETH after fee) to an Anvil account. This is the evidence the relayer-rail
 decision needs: the harness performs the watcher/attester/submitter steps manually.
 
+To run those steps automatically, start the dev watcher instead of using the manual
+script:
+
+```bash
+make relayer-watch         # watches Anvil deposits and rholo withdrawals
+# in another shell, lock or burn through the harness/dApp
+```
+
+The watcher starts at the current Anvil block and ignores withdrawals that were already
+pending when it started, so it only settles new work. It is a dev loop (fixed keys, no
+reorg handling, ETH-only, no bond/slashing); the production rail is still undecided.
+
 ## Current status
 
 - Phase 1 rholo demo: PASS (22 checks).
 - Phase 2 EVM vault: 9 Foundry tests pass; EVM ↔ rholo e2e PASS on Anvil + local devnet.
-- Not yet: Sepolia/Nile/Agoric deployment, real chain watching, multi-validator
-  finality, production relayer, web e2e.
+- Dev relayer loop: PASS — deposit watcher mints, withdrawal watcher unlocks and
+  completes.
+- Not yet: Sepolia/Nile/Agoric deployment, reorg handling, multi-validator finality,
+  production relayer, web e2e.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its

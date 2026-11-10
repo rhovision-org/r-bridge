@@ -220,6 +220,10 @@ contract BridgeVaultTest {
         vm.expectRevert();
         vault.lock(address(token), tooMuch, RHOLO_RECIPIENT, 1);
 
+        // 1 wei is below the ETH scale quantum (1e10).
+        vm.expectRevert();
+        vault.lock{value: 1}(address(0), 1, RHOLO_RECIPIENT, 2);
+
         uint256 amount = 1_000_000;
         token.approve(address(vault), amount);
         vault.lock(address(token), amount, RHOLO_RECIPIENT, 7);
