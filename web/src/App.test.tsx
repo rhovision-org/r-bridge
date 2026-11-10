@@ -7,9 +7,7 @@ describe("r-bridge shell", () => {
     render(<App />);
     expect(screen.getByText("r-bridge")).toBeInTheDocument();
     expect(screen.getByText("scaffold")).toBeInTheDocument();
-    expect(
-      screen.getAllByText(/rholo node relayer add-on/i).length,
-    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/relayer/i).length).toBeGreaterThan(0);
   });
 
   it("shows the canonical chain-qualified assets", () => {

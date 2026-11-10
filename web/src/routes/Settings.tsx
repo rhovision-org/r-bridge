@@ -1,40 +1,18 @@
 import { useState } from "react";
-
-const KEYS = {
-  node: "rbridge.node",
-  relayer: "rbridge.relayer",
-  network: "rbridge.network",
-} as const;
-
-function read(key: string, fallback: string): string {
-  try {
-    return localStorage.getItem(key) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { loadConfig, saveConfig, type AppConfig } from "../lib/config";
 
 export default function Settings() {
-  const [node, setNode] = useState(() =>
-    read(KEYS.node, import.meta.env.VITE_RBRIDGE_NODE ?? "http://localhost:40403"),
-  );
-  const [relayer, setRelayer] = useState(() =>
-    read(KEYS.relayer, import.meta.env.VITE_RBRIDGE_RELAYER_URL ?? ""),
-  );
-  const [network, setNetwork] = useState(() =>
-    read(KEYS.network, "rbridge-devnet"),
-  );
+  const [config, setConfig] = useState<AppConfig>(() => loadConfig());
   const [saved, setSaved] = useState(false);
 
+  function set(key: keyof AppConfig, value: string) {
+    setConfig((current) => ({ ...current, [key]: value }));
+    setSaved(false);
+  }
+
   function save() {
-    try {
-      localStorage.setItem(KEYS.node, node);
-      localStorage.setItem(KEYS.relayer, relayer);
-      localStorage.setItem(KEYS.network, network);
-      setSaved(true);
-    } catch {
-      setSaved(false);
-    }
+    saveConfig(config);
+    setSaved(true);
   }
 
   return (
@@ -42,49 +20,70 @@ export default function Settings() {
       <section>
         <h1>Settings</h1>
         <p className="muted">
-          Stored in this browser only. No account keys are kept here; native
-          accounts remain in their wallets.
+          Stored in this browser only. No account keys are kept here; native accounts
+          remain in their wallets and the rholo signer is a separate module.
         </p>
       </section>
 
       <section className="card form">
         <div className="row">
           <label htmlFor="node">rholo node</label>
+          <input id="node" value={config.node} onChange={(event) => set("node", event.target.value)} />
+        </div>
+        <div className="row">
+          <label htmlFor="bridge">Bridge URI</label>
           <input
-            id="node"
-            value={node}
-            onChange={(event) => setNode(event.target.value)}
+            id="bridge"
+            placeholder="rho:id:…"
+            value={config.bridgeUri}
+            onChange={(event) => set("bridgeUri", event.target.value)}
           />
         </div>
         <div className="row">
-          <label htmlFor="relayer">Relayer add-on URL</label>
+          <label htmlFor="vault">Anvil vault</label>
           <input
-            id="relayer"
-            placeholder="https://relayer.example"
-            value={relayer}
-            onChange={(event) => setRelayer(event.target.value)}
+            id="vault"
+            placeholder="0x…"
+            value={config.vault}
+            onChange={(event) => set("vault", event.target.value)}
           />
         </div>
         <div className="row">
-          <label htmlFor="network">Network id</label>
+          <label htmlFor="rholo">rholo address</label>
           <input
-            id="network"
-            value={network}
-            onChange={(event) => setNetwork(event.target.value)}
+            id="rholo"
+            placeholder="1111…"
+            value={config.rholoAddress}
+            onChange={(event) => set("rholoAddress", event.target.value)}
+          />
+        </div>
+        <div className="row">
+          <label htmlFor="anvil">Anvil RPC</label>
+          <input
+            id="anvil"
+            value={config.anvilRpc}
+            onChange={(event) => set("anvilRpc", event.target.value)}
           />
         </div>
         <button type="button" onClick={save}>
           Save
         </button>
-        {saved ? <p className="hint">Saved in this browser.</p> : null}
+        {saved ? <p className="hint">Saved. Reload the page to re-read the portfolio.</p> : null}
       </section>
 
       <section className="card">
-        <h2>Not configured yet</h2>
+        <h2>Where these values come from</h2>
         <ul>
-          <li>Bridge root URI and wrapped-token URIs.</li>
-          <li>Ethereum/Tron vault addresses and the Agoric vat instance.</li>
-          <li>Relayer pubkey set and threshold.</li>
+          <li>
+            <span className="mono">.devnet/bridge.json</span> — the installed bridge URI.
+          </li>
+          <li>
+            <span className="mono">.devnet/evm.json</span> — the Anvil vault address.
+          </li>
+          <li>
+            <span className="mono">.devnet/demo-keys.json</span> — the devnet deployer's REV
+            address (rholo address). Dev keys only.
+          </li>
         </ul>
       </section>
     </div>

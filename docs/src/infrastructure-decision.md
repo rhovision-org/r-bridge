@@ -58,6 +58,8 @@ accounting. The harness performs the watcher/attester/submitter steps manually.
 The dev watcher loop also passes: a new Anvil deposit is decoded and minted on rholo
 automatically, and a new rholo burn is unlocked and completed on Anvil automatically
 (2-of-3, fixed dev keys). That makes the watcher/attester/submitter work concrete.
+The web demo now reads the live rholo bridge and Anvil vault and locks ETH through
+MetaMask, so the user-facing loop is observable end to end.
 
 Not yet covered: Sepolia/Nile deployment, the Agoric vat, reorg handling, finality on a
 multi-validator/testnet, and the production relayer (journal, metrics, packaging,

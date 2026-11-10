@@ -115,14 +115,33 @@ The watcher starts at the current Anvil block and ignores withdrawals that were 
 pending when it started, so it only settles new work. It is a dev loop (fixed keys, no
 reorg handling, ETH-only, no bond/slashing); the production rail is still undecided.
 
+## Run the web demo
+
+With the devnet, bridge, Anvil vault and relayer from above still running:
+
+```bash
+npm --prefix web install
+npm --prefix web run dev
+```
+
+In Settings, set the node, bridge URI (`.devnet/bridge.json`), vault
+(`.devnet/evm.json`), rholo address (`.devnet/demo-keys.json` → `deployer.rev_address`)
+and Anvil RPC. The Overview reads the live bridge config, per-asset balances and vault
+status. On Bridge, connect MetaMask, let it add the Anvil network, and lock ETH; the
+relayer mints and the wrapped balance appears in the portfolio.
+
+Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.md`.
+
 ## Current status
 
 - Phase 1 rholo demo: PASS (22 checks).
 - Phase 2 EVM vault: 9 Foundry tests pass; EVM ↔ rholo e2e PASS on Anvil + local devnet.
 - Dev relayer loop: PASS — deposit watcher mints, withdrawal watcher unlocks and
   completes.
+- Web demo: live rholo bridge/vault reads and MetaMask ETH lock; 9 unit + 3 live-read
+  tests pass. The rholo signer/withdraw UI is next.
 - Not yet: Sepolia/Nile/Agoric deployment, reorg handling, multi-validator finality,
-  production relayer, web e2e.
+  production relayer, web withdrawal flow.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its
