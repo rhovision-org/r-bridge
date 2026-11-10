@@ -80,14 +80,15 @@ Makefile expects it at `~/.foundry/bin/forge` (override with `FORGE=...`).
 
 ```bash
 make devnet-up    # starts a 1-validator local devnet (8 GB node memory) on :40403
-make demo         # installs the bridge, runs 22 checks, exits PASS/FAIL
+make demo         # installs the bridge, runs 30 checks, exits PASS/FAIL
 make devnet-down
 ```
 
 The demo installs the rholo bridge contract, signs a deposit attestation with 2 of 3
 dev relayer keys, mints, replays the same deposit (refused), tries below-threshold
 (refused), burns, completes the withdrawal, transfers, pauses/unpauses via 2-of-3 admin
-signatures, and checks conservation. It is devnet-only; keys are generated in
+signatures, sweeps the accrued deposit fees to the treasury via a 2-of-3 admin action,
+and checks conservation. It is devnet-only; keys are generated in
 `.devnet/` and are worth nothing.
 
 `make mock-relayer` starts the dev-only HTTP relayer surface from
@@ -161,7 +162,7 @@ distinguishable from an error.
 
 ## Current status
 
-- Phase 1 rholo demo: PASS (22 checks).
+- Phase 1 rholo demo: PASS (30 checks, including the treasury fee sweep).
 - Phase 2 EVM vault: 10 Foundry tests pass (including a 2-of-3 admin refund); ETH and
   ERC-20 USDT ↔ rholo e2e PASS on Anvil + local devnet.
 - Dev relayer loop: PASS — deposit watcher mints, withdrawal watcher unlocks and

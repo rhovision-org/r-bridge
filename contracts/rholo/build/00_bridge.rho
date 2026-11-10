@@ -168,6 +168,7 @@ contract feeOf(@amount, @bps, ret) = {
       ret!((true, {
         "network": s.get("network"),
         "bridgeId": s.get("bridgeId"),
+        "treasury": s.get("treasury"),
         "paused": s.get("paused"),
         "relayers": s.get("relayers"),
         "relayerThreshold": s.get("relayerThreshold"),
@@ -387,6 +388,33 @@ contract feeOf(@amount, @bps, ret) = {
                     } else {
                       bridgeState!(s) | ret!((false, "bad args"))
                     }
+                  } else if (action == "withdrawFees") {
+                    // Sweep the accrued deposit fees for one asset to the treasury
+                    // account. Fees move from the fee bucket into the treasury's
+                    // wrapped balance, so circulating + fees is unchanged.
+                    if (s.get("treasury").length() == 0) {
+                      bridgeState!(s) | ret!((false, "treasury"))
+                    } else {
+                      match s.get("fees").get(args) {
+                        Nil => { bridgeState!(s) | ret!((false, "no fees")) }
+                        accrued => {
+                          if (accrued <= 0) {
+                            bridgeState!(s) | ret!((false, "no fees"))
+                          } else {
+                            new tCh, sbCh in {
+                              balanceOf!(s, args, s.get("treasury"), *tCh) |
+                              for (@toBal <- tCh) {
+                                setBalance!(s.get("balances"), args, s.get("treasury"), toBal + accrued, *sbCh) |
+                                for (@b2 <- sbCh) {
+                                  bridgeState!(s.set("balances", b2).set("fees", s.get("fees").set(args, 0)).set("adminNonce", nonce)) |
+                                  ret!((true, accrued))
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
                   } else {
                     bridgeState!(s) | ret!((false, "unknown action"))
                   }
@@ -405,6 +433,7 @@ contract feeOf(@amount, @bps, ret) = {
     bridgeState!({
       "network": __NETWORK__,
       "bridgeId": __BRIDGE_ID__,
+      "treasury": __TREASURY__,
       "admins": __ADMINS__,
       "adminThreshold": __ADMIN_THRESHOLD__,
       "relayers": __RELAYERS__,

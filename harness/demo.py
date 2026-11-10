@@ -182,12 +182,20 @@ def main() -> int:
         admins = [keygen() for _ in range(3)]
         relayers = [keygen() for _ in range(2)]
         user = keygen()
+        treasury = keygen()
         keys = {
             "deployer": {"secret": FUNDED_KEY, **deployer},
             "admins": admins,
             "relayers": relayers,
             "user": user,
+            "treasury": treasury,
         }
+        KEYS_FILE.write_text(json.dumps(keys, indent=2))
+        KEYS_FILE.chmod(0o600)
+
+    # Older key files predate the treasury account.
+    if "treasury" not in keys:
+        keys["treasury"] = keygen()
         KEYS_FILE.write_text(json.dumps(keys, indent=2))
         KEYS_FILE.chmod(0o600)
 
@@ -195,6 +203,7 @@ def main() -> int:
     admins = keys["admins"]
     relayers = keys["relayers"]
     user = keys["user"]
+    treasury = keys["treasury"]
     DEPLOY_SECRET = deployer["secret"]
 
     # The deployer is relayer 0 so the funded account can complete a withdrawal. The
@@ -205,6 +214,7 @@ def main() -> int:
     term = render.render(
         network=NETWORK,
         bridge_id=BRIDGE_ID,
+        treasury=treasury["rev_address"],
         admins=[admin["public"] for admin in admins],
         admin_threshold=2,
         relayers=relayer_keys,
@@ -230,6 +240,7 @@ def main() -> int:
     passed &= expect("config is a pair", config_read[0], True)
     passed &= expect("network", config_read[1]["network"], NETWORK)
     passed &= expect("bridge id", config_read[1]["bridgeId"], BRIDGE_ID)
+    passed &= expect("treasury", config_read[1]["treasury"], treasury["rev_address"])
     passed &= expect("relayer threshold", config_read[1]["relayerThreshold"], 2)
     asset = call_read(uri, f'Bridge!("asset", "{ASSET_KEY}", *ret)', "read_asset.rho")
     passed &= expect("asset enabled", asset[1]["enabled"], True)
@@ -340,12 +351,63 @@ def main() -> int:
     )
     passed &= expect("unpause", unpause, (True,))
 
-    # 7. Conservation: minted 1,000,000 = circulating + fees + burned.
+    # 7. Treasury fee sweep: 2-of-3, empty-bucket refusal, conservation.
+    treasury_address = treasury["rev_address"]
+    fees_before = call_read(uri, f'Bridge!("fees", "{ASSET_KEY}", *ret)', "fees_before_sweep.rho")
+    passed &= expect("fees before sweep", fees_before, (True, 500))
+    sweep3 = "rbridge:admin:v1|withdrawFees|" + ASSET_KEY + "|3"
+    sweep3_sigs = [sign_text(admin["secret"], sweep3)["signature"] for admin in admins[:2]]
+    sweep3_one = [sign_text(admins[0]["secret"], sweep3)["signature"]]
+    below_fees = call_write(
+        uri,
+        f'Bridge!("admin", "withdrawFees", "{ASSET_KEY}", 3, [{signature_literals(sweep3_one)}], *ret)',
+        deployer["secret"],
+        "withdraw_fees_below_threshold.rho",
+    )
+    passed &= expect("fee sweep below threshold refused", below_fees, (False, "below threshold"))
+    sweep = call_write(
+        uri,
+        f'Bridge!("admin", "withdrawFees", "{ASSET_KEY}", 3, [{signature_literals(sweep3_sigs)}], *ret)',
+        deployer["secret"],
+        "withdraw_fees.rho",
+    )
+    passed &= expect("fee sweep", sweep, (True, 500))
+    fees_after = call_read(uri, f'Bridge!("fees", "{ASSET_KEY}", *ret)', "fees_after_sweep.rho")
+    passed &= expect("fees after sweep", fees_after, (True, 0))
+    treasury_balance = call_read(
+        uri,
+        f'Bridge!("balanceOf", "{ASSET_KEY}", "{treasury_address}", *ret)',
+        "balance_treasury.rho",
+    )
+    passed &= expect("treasury balance", treasury_balance, (True, 500))
+
+    sweep4 = "rbridge:admin:v1|withdrawFees|" + ASSET_KEY + "|4"
+    sweep4_sigs = [sign_text(admin["secret"], sweep4)["signature"] for admin in admins[:2]]
+    empty_sweep = call_write(
+        uri,
+        f'Bridge!("admin", "withdrawFees", "{ASSET_KEY}", 4, [{signature_literals(sweep4_sigs)}], *ret)',
+        deployer["secret"],
+        "withdraw_fees_empty.rho",
+    )
+    passed &= expect("empty fee sweep refused", empty_sweep, (False, "no fees"))
+
+    sweep5 = "rbridge:admin:v1|withdrawFees|ethereum.dai|5"
+    sweep5_sigs = [sign_text(admin["secret"], sweep5)["signature"] for admin in admins[:2]]
+    unknown_sweep = call_write(
+        uri,
+        f'Bridge!("admin", "withdrawFees", "ethereum.dai", 5, [{signature_literals(sweep5_sigs)}], *ret)',
+        deployer["secret"],
+        "withdraw_fees_unknown.rho",
+    )
+    passed &= expect("unknown asset fee sweep refused", unknown_sweep, (False, "no fees"))
+
+    # 8. Conservation: minted 1,000,000 = circulating (incl. treasury) + fees + burned.
     owner_balance = call_read(uri, f'Bridge!("balanceOf", "{ASSET_KEY}", "{recipient}", *ret)', "balance_final_owner.rho")[1]
     user_balance = call_read(uri, f'Bridge!("balanceOf", "{ASSET_KEY}", "{to}", *ret)', "balance_final_user.rho")[1]
+    treasury_final = call_read(uri, f'Bridge!("balanceOf", "{ASSET_KEY}", "{treasury_address}", *ret)', "balance_final_treasury.rho")[1]
     fee_balance = call_read(uri, f'Bridge!("fees", "{ASSET_KEY}", *ret)', "fees_final.rho")[1]
     burned = 400_000 + 1
-    circulating = owner_balance + user_balance
+    circulating = owner_balance + user_balance + treasury_final
     passed &= expect("conservation", circulating + fee_balance + burned, 1_000_000)
 
     print()

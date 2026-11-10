@@ -44,9 +44,9 @@ Only the process that implements the interface, and its packaging, moves.
 ## Demo status (2026-11-10)
 
 The rail-agnostic demo **passes** on a local rholo devnet: the bridge contract installs,
-a mock 2-of-3 relayer signs the canonical digest, and 22 checks cover mint, replay,
-below-threshold refusal, burn, withdrawal completion, transfer, pause/unpause and
-conservation. `make mock-relayer` exposes the read interface from
+a mock 2-of-3 relayer signs the canonical digest, and 30 checks cover mint, replay,
+below-threshold refusal, burn, withdrawal completion, transfer, pause/unpause, the
+treasury fee sweep and conservation. `make mock-relayer` exposes the read interface from
 `spec/relayer-interface.md`.
 
 The Ethereum/TVM vault is also implemented and passes 10 Foundry tests, including a

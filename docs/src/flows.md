@@ -74,7 +74,10 @@ user            dApp (WASM key)        rholo Bridge          relayer           v
 
 ## Fees and conservation
 
-Deposit fee is deducted from the minted amount; withdrawal fee is retained by the vault
-and accounted to the bridge treasury. Fees are never minted. The wrapped supply is
-always backed by native assets held by the vault/vat; the conservation invariant and
-its tests are in `spec/invariants.md`.
+Deposit fee is deducted from the minted amount and accrues in the bridge's per-asset
+`fees` bucket; withdrawal fee is retained by the vault and accounted to the vault
+treasury. A 2-of-3 `admin("withdrawFees", assetKey, …)` sweeps the whole accrued bucket
+into the treasury account fixed at deploy, as the treasury's wrapped balance: circulating
+plus fees is unchanged, so the sweep mints nothing. Fees are never minted. The wrapped
+supply is always backed by native assets held by the vault/vat; the conservation
+invariant and its tests are in `spec/invariants.md`.

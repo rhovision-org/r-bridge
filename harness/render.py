@@ -41,6 +41,7 @@ def asset_map(assets: list[dict]) -> str:
 def render(
     network: str,
     bridge_id: str,
+    treasury: str,
     admins: list[str],
     admin_threshold: int,
     relayers: list[str],
@@ -51,6 +52,7 @@ def render(
     replacements = {
         "__NETWORK__": json.dumps(network),
         "__BRIDGE_ID__": json.dumps(bridge_id),
+        "__TREASURY__": json.dumps(treasury),
         "__ADMINS__": key_list(admins),
         "__ADMIN_THRESHOLD__": str(admin_threshold),
         "__RELAYERS__": key_list(relayers),

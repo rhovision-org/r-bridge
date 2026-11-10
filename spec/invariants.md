@@ -13,6 +13,8 @@ totalMinted = circulating + feeBalance + totalBurned
 
 - `mint(A)` with fee `F`: `totalMinted += A`, recipient `+= A - F`, `feeBalance += F`.
 - `burn(B)`: `circulating -= B`, `totalBurned += B`.
+- `admin("withdrawFees", asset)`: `feeBalance -= F`, treasury `+= F`, where `F` is the
+  whole accrued bucket. This moves fees into circulation; it mints nothing.
 - No balance may be negative. `transfer` moves value between holders without changing
   the totals.
 - On the native side, the vault's locked balance must never be less than the wrapped
@@ -41,6 +43,8 @@ checks the totals before and after.
 - Mint authority is a capability held in the `Bridge` closure. It is not stored in a
   state map and is not exposed at a public name.
 - Admin arms (registry, fee, caps, pause, relayer set) require the 2-of-3 admin set.
+  The fee sweep credits the treasury address fixed at deploy; there is no arm that
+  moves fees to a caller-chosen recipient.
 - A pause must not block `burn`, refunds, or completion of an in-flight transfer. New
   deposits/mints fail closed.
 
@@ -77,6 +81,7 @@ checks the totals before and after.
 | mint | valid threshold; below threshold; wrong asset/chain/direction; replay; paused; cap; dust amount |
 | burn | holder only; insufficient balance; destination validation; idempotent op id; paused (must still allow burn) |
 | transfer | holder only; zero/negative; self-transfer; conservation |
+| fees | treasury sweep at threshold; below threshold; empty bucket; unknown asset; conservation |
 | attestation | golden digest; each field bound; malformed DER; duplicate signer; non-32-byte digest; `|` injection |
 | registry | admin only; scale bounds; fee/cap bounds; disabled asset exit path |
 | scaling | 18→8; 6→6; dust refusal; i64 overflow; round trip |
