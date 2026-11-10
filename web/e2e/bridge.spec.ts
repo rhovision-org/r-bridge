@@ -90,9 +90,11 @@ test("locks ETH through the configured vault", async ({ page }) => {
   await page.goto("/#/bridge");
   await page.getByRole("button", { name: "Connect MetaMask" }).click();
   await expect(page.getByText(/MetaMask: 0xf39F/)).toBeVisible();
+  await expect(page.getByText(/rholo address: 1111/)).toBeVisible();
+  await page.getByRole("button", { name: "Use as recipient" }).click();
+  await expect(page.getByLabel("rholo recipient")).toHaveValue(/^1111/);
 
   await page.getByLabel("Amount").fill("0.1");
-  await page.getByLabel("rholo recipient").fill("1111demo");
   await page.getByRole("button", { name: "Lock and mint" }).click();
 
   await expect(page.getByText(/Lock submitted: 0x/)).toBeVisible();
@@ -131,7 +133,7 @@ test("refuses an amount above the vault cap before sending", async ({ page }) =>
 test("creates and downloads a Web3 v3 keystore", async ({ page }) => {
   await page.goto("/#/settings");
   await page.getByLabel("Password", { exact: true }).fill("interop-password");
-  await page.getByLabel("Confirm").fill("interop-password");
+  await page.getByLabel("Confirm", { exact: true }).fill("interop-password");
 
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Create and download" }).click();
@@ -148,4 +150,29 @@ test("creates and downloads a Web3 v3 keystore", async ({ page }) => {
   expect(json.crypto.kdf).toBe("scrypt");
   expect(json.crypto.cipher).toBe("aes-128-ctr");
   await expect(page.getByText(/REV 1111/)).toBeVisible();
+});
+
+test("imports a MetaMask key and saves only the encrypted copy", async ({ page }) => {
+  const secret = "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
+  await page.goto("/#/settings");
+  await page.locator("#import-key").fill(`0x${secret}`);
+  await page.locator("#import-password").fill("interop-password");
+  await page.locator("#import-confirm").fill("interop-password");
+  await page.locator("#import-save").check();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Encrypt and download" }).click();
+  const download = await downloadPromise;
+
+  expect(download.suggestedFilename()).toMatch(/^UTC--.*--2c7536e3605d9c16a7a3d7b1898e529396a65c23(\.json)?$/);
+  await expect(page.getByText(/ETH 0x2c7536e3605d9c16a7a3d7b1898e529396a65c23/)).toBeVisible();
+  await expect(page.getByText(/REV 1111/)).toBeVisible();
+
+  const stored = (await page.evaluate(() => localStorage.getItem("rbridge.keystores"))) ?? "";
+  expect(stored).toContain("ciphertext");
+  expect(stored).not.toContain(secret);
+  expect(stored).not.toContain("interop-password");
+
+  await page.reload();
+  await expect(page.getByText("0x2c7536e3605d9c16a7a3d7b1898e529396a65c23")).toBeVisible();
 });

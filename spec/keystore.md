@@ -44,11 +44,39 @@ Implementation: `crates/rbridge-keystore`, exposed to the browser through
   fixtures.
 - `web/src/lib/keystore.test.ts` runs create → unlock through the compiled WASM module.
 
+## MetaMask keys
+
+MetaMask and rholo use the same secp256k1 curve, so one key addresses both an Ethereum
+account and a rholo account.
+
+- **Address mapping is public.** The REV address is derived from the Ethereum address
+  (keccak of the 20-byte address, base58 with a checksum), so the dApp shows the rholo
+  address for the connected MetaMask account without asking for a key. The Bridge offers
+  it as the deposit recipient.
+- **Signing needs the key.** MetaMask cannot sign the rholo deploy preimage (BLAKE2b-256
+  protobuf, `shardId` field 11, `{prehash:false}`), so signing still needs the key in a
+  rholo keystore. A user can export the key from MetaMask (Account details → Show private
+  key) and encrypt it in Settings; the same key then holds the native side in MetaMask and
+  the rholo side in r-bridge. Prefer a dedicated account for this.
+- Files created here are standard v3 files and can be imported into MetaMask as a JSON
+  keystore, and MetaMask-exported keys can be imported here.
+
+## Device and browser copies
+
+- Create and import both download the v3 JSON to the user's device. The same file can be
+  loaded again on Bridge (with its password) or in Settings.
+- Settings can keep an encrypted copy in browser storage (`localStorage`,
+  `rbridge.keystores`). Only the v3 JSON is stored — never the password, never the
+  plaintext key. Saved copies can be downloaded again or forgotten.
+- Bridge can pick a saved copy or load one from disk.
+
 ## Security posture
 
 - The plaintext secret exists only in memory: WASM returns it to the caller for the
-  signing operation, and the web app does not write it to storage. Keystore session
-  persistence (for example IndexedDB) is deliberately not implemented yet.
+  signing operation. The browser stores encrypted copies only, and the password is never
+  written anywhere.
+- An encrypted copy in browser storage is exposed to anyone with the profile (and to XSS),
+  who can attack it offline. Password strength matters; the UI says so and offers Forget.
 - A wrong password and a corrupt file are the same failure: the MAC check happens before
   decryption.
 - Imports bound the work a hostile file can request: scrypt memory is capped at 512 MiB

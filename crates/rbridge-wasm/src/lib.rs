@@ -77,6 +77,14 @@ pub fn scale_native_to_rholo(
     Ok(amount.value().to_string())
 }
 
+/// The REV address the node derives from an Ethereum address. MetaMask exposes the
+/// address but not the key; this mapping is public, so a deposit recipient can be shown
+/// for the connected MetaMask account without ever seeing its secret.
+#[wasm_bindgen]
+pub fn rev_address_from_eth(eth_address: &str) -> Result<String, JsValue> {
+    rbridge_chain::rev_address_from_eth_address(eth_address).map_err(js_error)
+}
+
 /// Encrypt a 32-byte secret into a Web3 v3 keystore (r-wallet compatible).
 #[wasm_bindgen]
 pub fn keystore_create(secret_hex: &str, password: &str) -> Result<String, JsValue> {
@@ -261,5 +269,24 @@ mod tests {
     #[test]
     fn version_is_reported() {
         assert!(!version().is_empty());
+    }
+
+    #[test]
+    fn a_metamask_address_maps_to_the_same_rev_address() {
+        let key = KeyPair::from_secret_hex(
+            "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76",
+        )
+        .expect("key");
+        let eth = rbridge_chain::eth_address(&key).expect("eth address");
+        let expected = key.rev_address().expect("rev address");
+        assert_eq!(rev_address_from_eth(&eth).expect("rev"), expected);
+        assert_eq!(
+            rev_address_from_eth(&format!("0x{eth}")).expect("rev"),
+            expected
+        );
+        assert_eq!(
+            expected,
+            "11112VYAt8rUGNRRZX3eJdgagaAhtWTK8Js7F7X5iqddMVqyDTtYau"
+        );
     }
 }

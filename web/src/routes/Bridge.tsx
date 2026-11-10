@@ -4,7 +4,8 @@ import { RELAYER_ISSUE } from "../App";
 import { ASSETS, CHAIN_LABEL, type Chain } from "../lib/assets";
 import { loadConfig } from "../lib/config";
 import { lockErc20, lockEth } from "../lib/evm";
-import { keystoreAddress, unlockKeystore } from "../lib/keystore";
+import { keystoreAddress, revAddressFromEth, unlockKeystore } from "../lib/keystore";
+import { loadSavedKeystores } from "../lib/keystore-store";
 import { bridgeDeployTerm, burnCall } from "../lib/rholo";
 import { connectMetaMask } from "../lib/wallets";
 
@@ -27,7 +28,10 @@ export default function Bridge() {
   const [keystoreJson, setKeystoreJson] = useState("");
   const [keystorePassword, setKeystorePassword] = useState("");
   const [keystoreAccount, setKeystoreAccount] = useState<string | null>(null);
+  const [savedAddress, setSavedAddress] = useState("");
+  const [savedKeystores] = useState(() => loadSavedKeystores());
   const [account, setAccount] = useState<Address | null>(null);
+  const [metaMaskRev, setMetaMaskRev] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tx, setTx] = useState<Hash | null>(null);
@@ -74,7 +78,13 @@ export default function Bridge() {
   async function connect() {
     setError(null);
     try {
-      setAccount((await connectMetaMask()) as Address);
+      const address = (await connectMetaMask()) as Address;
+      setAccount(address);
+      try {
+        setMetaMaskRev(await revAddressFromEth(address));
+      } catch {
+        setMetaMaskRev(null);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -136,9 +146,18 @@ export default function Bridge() {
     }
   }
 
+  function chooseSaved(address: string) {
+    setSavedAddress(address);
+    const item = savedKeystores.find((candidate) => candidate.address === address);
+    setKeystoreJson(item?.json ?? "");
+    setKeystoreAccount(item?.address ?? null);
+    setError(null);
+  }
+
   async function loadKeystore(file: File | undefined) {
     setError(null);
     setKeystoreAccount(null);
+    setSavedAddress("");
     if (!file) {
       setKeystoreJson("");
       return;
@@ -165,7 +184,7 @@ export default function Bridge() {
       return;
     }
     if (!keystoreJson && !rholoSecret) {
-      setError("Choose a keystore file or paste the devnet signer secret.");
+      setError("Choose a saved or on-disk keystore, or paste the devnet signer secret.");
       return;
     }
     if (!/^0x[0-9a-fA-F]{40}$/.test(recipient)) {
@@ -186,7 +205,7 @@ export default function Bridge() {
         }
       }
       if (!secret) {
-        setError("Choose a keystore file or paste the devnet signer secret.");
+        setError("Choose a saved or on-disk keystore, or paste the devnet signer secret.");
         return;
       }
       const { initWasm, RholoClient, RholoKey } = await import("../wasm");
@@ -312,8 +331,27 @@ export default function Bridge() {
 
         {direction === "withdraw" ? (
           <>
+            {savedKeystores.length > 0 ? (
+              <div className="row">
+                <label htmlFor="saved-keystore">Saved in this browser</label>
+                <select
+                  id="saved-keystore"
+                  value={savedAddress}
+                  onChange={(event) => chooseSaved(event.target.value)}
+                >
+                  <option value="">— choose a saved keystore —</option>
+                  {savedKeystores.map((item) => (
+                    <option key={item.address} value={item.address}>
+                      {item.address}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div className="row">
-              <label htmlFor="keystore">rholo keystore</label>
+              <label htmlFor="keystore">
+                {savedKeystores.length > 0 ? "or load from your device" : "rholo keystore"}
+              </label>
               <input
                 id="keystore"
                 type="file"
@@ -333,7 +371,8 @@ export default function Bridge() {
             </div>
             <p className="hint">
               Unlocked in the browser by the WASM keystore (Web3 v3, the same file
-              r-wallet uses). The decrypted key is held only for this burn.
+              r-wallet uses). Pick a copy saved in this browser or load one from your
+              device; the decrypted key is held only for this burn.
             </p>
             <div className="row">
               <label htmlFor="secret">or dev secret</label>
@@ -358,7 +397,19 @@ export default function Bridge() {
             Connect MetaMask
           </button>
         ) : (
-          <p className="mono">MetaMask: {account}</p>
+          <>
+            <p className="mono">MetaMask: {account}</p>
+            {metaMaskRev ? (
+              <p className="mono hint">
+                rholo address: {metaMaskRev}{" "}
+                {direction === "deposit" ? (
+                  <button type="button" onClick={() => setRecipient(metaMaskRev)}>
+                    Use as recipient
+                  </button>
+                ) : null}
+              </p>
+            ) : null}
+          </>
         )}
 
         <button

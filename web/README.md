@@ -15,20 +15,27 @@ module (next phase).
 - **MetaMask ERC-20 approve+lock** for USDT: reads the token decimals and the vault's
   per-asset cap/scale, approves the vault for exactly the deposit amount when the
   allowance is short, waits for the approval receipt, then calls `lock`.
-- **rholo keystore import/create** on Settings and Bridge: a Web3 v3 file (scrypt +
-  AES-128-CTR, the same format r-wallet uses) is decrypted in WASM; the decrypted key
-  stays in memory for the operation. Settings can create a new account and download its
-  keystore. Import also accepts geth PBKDF2 files.
+- **rholo keystore create/import/load** on Settings and Bridge: a Web3 v3 file (scrypt +
+  AES-128-CTR, the same format r-wallet and MetaMask use) is decrypted in WASM; the
+  decrypted key stays in memory for the operation. Settings can create an account,
+  encrypt an existing key (for example one exported from MetaMask), load a file from
+  disk, download any saved copy, and keep an encrypted copy in the browser. Import also
+  accepts geth PBKDF2 files.
+- **MetaMask ↔ rholo address mapping**: the Bridge derives the REV address from the
+  connected MetaMask account and offers it as the deposit recipient. The same secp256k1
+  key addresses both chains; to sign rholo deploys, export the key from MetaMask and
+  encrypt it in Settings (MetaMask itself cannot sign the rholo deploy preimage).
 - **WASM-signed rholo burn** for the withdraw direction: either the imported keystore or
   the dev secret signs the deploy in the browser, and the relayer unlocks on Anvil.
 - **Portfolio** polls every 5 seconds, so a lock that the relayer mints appears as a
   wrapped balance. The Overview shows native ETH and USDT balances for the connected
   MetaMask account and the vault's per-asset locked/fee totals.
 
-Not wired in the UI yet: TronLink/Keplr writes and keystore persistence between
-sessions (the key is re-imported or the dev secret re-entered per session). The dev
-secret input is for the devnet only. USDC/DAI remain read-only until those tokens are
-added to a vault deployment.
+Not wired in the UI yet: TronLink/Keplr writes and a MetaMask Snap for signing rholo
+deploys inside MetaMask (today the key is exported and encrypted here). Saved keystore
+copies live in `localStorage` as ciphertext; the password is entered per signing
+operation. The dev secret input is for the devnet only. USDC/DAI remain read-only until
+those tokens are added to a vault deployment.
 
 The web build runs `wasm-pack` in `predev`/`pretypecheck`/`prebuild`/`pretest`; it needs
 the Rust toolchain with the `wasm32-unknown-unknown` target and `wasm-pack`.
@@ -63,12 +70,14 @@ token address in Settings first; the button becomes "Approve and lock" and asks 
 MetaMask confirmations. `make e2e-evm` mints the mock USDT to Anvil account 0, which
 MetaMask uses by default, so there is a balance to test with.
 
-For withdraw, choose a keystore file and enter its password (or paste the devnet
-deployer secret into the signer field); the signer must match the configured rholo
-address. Enter a 0x destination and burn; the relayer unlocks on Anvil. To make a
-keystore, use **Settings → Create a rholo keystore**; the downloaded file opens in
-r-wallet too. A newly created account needs REV before it can submit deploys. The devnet
-key is throwaway; never use it with real value.
+For withdraw, pick a keystore saved in the browser, load one from disk, or paste the
+devnet deployer secret; enter its password and burn. The signer must match the configured
+rholo address. Enter a 0x destination; the relayer unlocks on Anvil. To make a keystore,
+use **Settings → Create a rholo keystore**; to use a MetaMask key, use **Settings → Use a
+MetaMask key for rholo**. Both download a v3 file (also importable into r-wallet and
+MetaMask) and can keep an encrypted copy in this browser. A newly created account needs
+REV before it can submit deploys. The devnet key is throwaway; never use it with real
+value.
 
 ## Tests
 

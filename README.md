@@ -17,7 +17,10 @@ sides. It is not a wallet: native accounts stay in MetaMask, TronLink and Keplr.
 
 r-bridge uses what the user already has:
 
-- **MetaMask** for Ethereum accounts, network switching, approvals and vault calls.
+- **MetaMask** for Ethereum accounts, network switching, approvals and vault calls. The
+  same secp256k1 key addresses a rholo account: the Bridge derives the REV address from
+  the connected account, and a key exported from MetaMask can be encrypted into a rholo
+  keystore (Settings) so it signs deploys too.
 - **TronLink** for Tron accounts and TRC-20 calls.
 - **Keplr** for Cosmos/Agoric accounts and Zoe/IBC offers.
 - **r-bridge's own WASM keystore** only for the rholo account, because MetaMask cannot
@@ -145,14 +148,16 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
   completes; failed deposits are journaled and `make refund-failed` returns the native
   funds via the admin refund.
 - Web demo: live rholo bridge/vault reads, MetaMask ETH and USDT locks (approve +
-  lock), a WASM-signed rholo burn for withdraw, and rholo keystore import/create
-  (Web3 v3, r-wallet compatible); 19 unit + 4 Playwright browser tests + 5 opt-in live
-  tests pass, and a Node smoke test signs and submits a burn through the wasm client.
+  lock), a WASM-signed rholo burn for withdraw, and rholo keystore create/import/load
+  (Web3 v3, r-wallet compatible; save to device or keep an encrypted copy in the
+  browser; MetaMask keys work as rholo keys); 26 unit + 5 Playwright browser tests + 5
+  opt-in live tests pass, and a Node smoke test signs and submits a burn through the
+  wasm client.
 - Agoric vat: Zoe escrow/release contract passes deposit, 2-of-3 release, replay,
   below-threshold and wrong-digest tests. No live Agoric chain/IBC or Agoric watcher yet.
 - Not yet: Sepolia/Nile deployment, live Agoric/IBC, reorg handling, multi-validator
-  finality, production relayer, TronLink/Keplr writes, keystore session persistence in
-  the browser.
+  finality, production relayer, TronLink/Keplr writes, a MetaMask Snap for direct rholo
+  signing.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its

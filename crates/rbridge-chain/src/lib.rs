@@ -8,7 +8,9 @@
 
 pub use rcash_chain::error::ChainError;
 pub use rcash_chain::node::{BlockInfo, DeployStatus, ExploreResponse, NodeClient};
-pub use rcash_chain::{eth_address_from_public_key, DeployOptions, KeyPair, SignedDeploy};
+pub use rcash_chain::{
+    eth_address_from_public_key, rev_address_from_eth_address, DeployOptions, KeyPair, SignedDeploy,
+};
 
 /// The 20-byte Ethereum address (lowercase hex, no `0x`) of a key. The same key addresses
 /// both Ethereum and rholo; the vault and the rholo ledger use different representations.

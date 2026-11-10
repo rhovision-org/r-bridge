@@ -38,9 +38,13 @@ signature is not something those wallets can produce.
 - **Native account**: owned by the wallet. The dApp requests signatures; it never sees
   the key.
 - **rholo account**: a secp256k1 key in the WASM module, supplied as an encrypted Web3
-  v3 keystore file. The browser decrypts it in WASM and keeps the key in memory for the
-  operation; the demo does not persist it between sessions yet. It signs rholo deploys
-  and pays phlo. The file is portable to/from r-wallet and the r-gen/r-cash clients.
+  v3 keystore file. Files can be saved to and loaded from the user's device, and an
+  encrypted copy can be kept in browser storage (never the password or plaintext). The
+  browser decrypts it in WASM and keeps the key in memory for the operation. The same
+  key addresses an Ethereum account, so a MetaMask key can be turned into a rholo
+  keystore and a MetaMask address maps to a REV address without revealing the key. It
+  signs rholo deploys and pays phlo. The file is portable to/from r-wallet, MetaMask and
+  the r-gen/r-cash clients.
 - **Relayer key**: owned by the node add-on; signs the 32-byte attestation digest. It is
   not the validator key and not the deploy key.
 

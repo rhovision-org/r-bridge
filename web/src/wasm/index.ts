@@ -3,9 +3,10 @@ import init, {
   RholoKey,
   keystore_create,
   keystore_unlock,
+  rev_address_from_eth,
 } from "./pkg/rbridge_wasm.js";
 
-export { RholoClient, RholoKey, keystore_create, keystore_unlock };
+export { RholoClient, RholoKey, keystore_create, keystore_unlock, rev_address_from_eth };
 
 let ready: Promise<void> | null = null;
 
