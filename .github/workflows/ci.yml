@@ -32,6 +32,7 @@ jobs:
           version: "v1.9.0"
       - run: forge test --root contracts/evm -vv
       - run: python3 harness/reorg_demo.py
+      - run: python3 harness/metrics_demo.py
 
   agoric:
     runs-on: ubuntu-latest

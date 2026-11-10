@@ -22,6 +22,9 @@ Devnet only. Nothing here is a production relayer, and the keys are worth nothin
 - `reorg_demo.py` — proves the relayer's safe-head and reorg handling on its own Anvil
   (no rholo node): a rollback with no settled deposits rewinds the cursor; a rollback
   that removes a settled deposit halts the relayer for reconciliation.
+- `metrics_demo.py` — runs the relayer with `--metrics-port 9110` against its own Anvil,
+  settles a deposit, then rolls it back. Checks `/metrics`, `/health` and `/v1/chains`,
+  and that the endpoints stay up while halted.
 - `dev_relayer.py` — the dev watcher loop. It scans new Anvil `Deposit` logs, decodes
   the event, reads the vault asset config, signs the 2-of-3 deposit digest, and calls
   `Bridge.mint`. It also polls rholo `pendingWithdrawals`, signs the 65-byte withdrawal
@@ -29,7 +32,9 @@ Devnet only. Nothing here is a production relayer, and the keys are worth nothin
   locking; it ignores pre-existing pending withdrawals. It journals block hashes and
   only settles below a safe head (`--confirmations N` or `--finalized`); a reorg at or
   below a settled deposit halts it. `--dry-run --once` scans and journals without rholo
-  calls, which is what `reorg_demo.py` uses.
+  calls, which is what `reorg_demo.py` uses. `--metrics-port 9110` serves `/metrics`
+  (Prometheus), `/health` and `/v1/chains` from the journal; the endpoints stay up while
+  halted.
 - `.devnet/` — generated keys (`demo-keys.json`, mode 600), the installed bridge URI,
   the Anvil vault address, rendered terms and transient files. Gitignored.
 
@@ -43,6 +48,7 @@ make e2e-evm        # cross-chain demo; requires Anvil on :8545
 make relayer-watch  # dev watcher loop; start it before locking
 make refund-failed  # return native funds for journaled failed deposits
 make reorg-demo     # anvil rollback -> cursor rewind / halt (own Anvil on :8545)
+make metrics-demo   # /metrics, /health, /v1/chains + halted state (own Anvil, :9110)
 make devnet-down
 ```
 
@@ -71,6 +77,9 @@ them, so a re-run installs a fresh bridge at a new URI and repeats the checks.
 - `reorg_demo.py` proves the safe-head gate and reorg journal on Anvil: an unprocessed
   rollback rewinds the cursor, and a rollback that removes a settled deposit halts the
   relayer instead of minting on a stale observation.
+- `metrics_demo.py` proves the read surface: the Prometheus counters/gauges track the
+  settled deposit and the halt, `/health` reports the same state, and `/v1/chains`
+  disables the chain while halted.
 
 ## What it does not prove
 

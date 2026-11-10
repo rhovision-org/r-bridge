@@ -120,6 +120,12 @@ rbridge_pending{chain}
 
 Health is a separate endpoint so a load balancer does not parse Prometheus text.
 
+The dev watcher implements this surface on `--metrics-port`: `/metrics` (Prometheus),
+`/health` (JSON) and `/v1/chains`. Settled deposits and withdrawals are counters, failed
+deposits and reorgs are error counters, and `rbridge_halted` is 1 while it refuses to
+settle. The endpoints stay up while halted so alerting can fire; `metrics_demo.py`
+checks the scrape and the halt transition.
+
 ## Registration and economics
 
 - The relayer set and threshold live in `BridgeRoot` and in each native vault; a change

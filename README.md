@@ -151,6 +151,8 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
   completes; failed deposits are journaled and `make refund-failed` returns the native
   funds via the admin refund. The safe-head gate and reorg journal pass
   `make reorg-demo`: an unprocessed rollback rewinds, a reorged settled deposit halts.
+  `make metrics-demo` checks `/metrics`, `/health` and `/v1/chains`, including the
+  halted state staying scrapeable.
 - Web demo: live rholo bridge/vault reads, MetaMask ETH and USDT locks (approve +
   lock), TronLink TRX/TRC-20 deposits against the TVM vault, a WASM-signed rholo burn
   for withdraw, and rholo keystore create/import/load (Web3 v3, r-wallet compatible;

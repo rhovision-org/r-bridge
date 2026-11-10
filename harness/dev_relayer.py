@@ -19,12 +19,17 @@ Start it before locking; it only scans new Anvil blocks.
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -183,6 +188,101 @@ class Relayer:
         # The bridge was installed with these assets; read the config per token lazily.
         self.assets: dict[str, dict] = {}
         self.rholo_assets: dict[str, dict] = {}
+        self.http_server: ThreadingHTTPServer | None = None
+        self._halted_reported = False
+
+    def metrics_text(self) -> str:
+        """Prometheus exposition for the rail-agnostic metric names in the spec."""
+        settled = len(self.state["deposits"])
+        failed = len(self.state["failed_deposits"])
+        withdrawals = len(self.state["withdrawals"])
+        reorgs = len(self.state["reorgs"])
+        halted = 1 if self.state["halted"] else 0
+        return "\n".join(
+            [
+                "# HELP rbridge_chain_head Last processed deposit block.",
+                "# TYPE rbridge_chain_head gauge",
+                f'rbridge_chain_head{{chain="ethereum"}} {self.state["last_block"]}',
+                "# HELP rbridge_deposits_total Deposits by settlement state.",
+                "# TYPE rbridge_deposits_total counter",
+                f'rbridge_deposits_total{{chain="ethereum",state="settled"}} {settled}',
+                f'rbridge_deposits_total{{chain="ethereum",state="failed"}} {failed}',
+                "# HELP rbridge_withdrawals_total Settled native withdrawals.",
+                "# TYPE rbridge_withdrawals_total counter",
+                f'rbridge_withdrawals_total{{chain="ethereum",state="settled"}} {withdrawals}',
+                "# HELP rbridge_reorgs_total Reorgs detected at or below the tip.",
+                "# TYPE rbridge_reorgs_total counter",
+                f"rbridge_reorgs_total {reorgs}",
+                "# HELP rbridge_errors_total Refusals and safety events.",
+                "# TYPE rbridge_errors_total counter",
+                f'rbridge_errors_total{{chain="ethereum",kind="failed_deposit"}} {failed}',
+                f'rbridge_errors_total{{chain="ethereum",kind="reorg"}} {reorgs}',
+                "# HELP rbridge_halted 1 when the relayer stopped settling.",
+                "# TYPE rbridge_halted gauge",
+                f"rbridge_halted {halted}",
+                "",
+            ]
+        )
+
+    def health(self) -> dict:
+        return {
+            "version": "dev",
+            "chains": ["ethereum"],
+            "threshold": 2,
+            "paused": False,
+            "halted": self.state["halted"],
+            "last_block": self.state["last_block"],
+            "deposits": {
+                "settled": len(self.state["deposits"]),
+                "failed": len(self.state["failed_deposits"]),
+            },
+            "withdrawals": len(self.state["withdrawals"]),
+            "reorgs": len(self.state["reorgs"]),
+            "dry_run": self.dry_run,
+            "confirmations": self.confirmations,
+            "finalized": self.finalized,
+        }
+
+    def chains(self) -> list[dict]:
+        return [
+            {
+                "chain": "ethereum",
+                "head": self.state["last_block"],
+                "confirmations": self.confirmations,
+                "finalized": self.finalized,
+                "enabled": self.state["halted"] is None,
+            }
+        ]
+
+    def start_http(self, port: int, bind: str) -> None:
+        relayer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - http.server API
+                if self.path == "/metrics":
+                    body = relayer.metrics_text().encode()
+                    content_type = "text/plain; version=0.0.4"
+                elif self.path == "/health":
+                    body = json.dumps(relayer.health()).encode()
+                    content_type = "application/json"
+                elif self.path == "/v1/chains":
+                    body = json.dumps(relayer.chains()).encode()
+                    content_type = "application/json"
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:  # noqa: ANN002 - silence access logs
+                pass
+
+        self.http_server = ThreadingHTTPServer((bind, port), Handler)
+        thread = threading.Thread(target=self.http_server.serve_forever, daemon=True)
+        thread.start()
 
     def save(self) -> None:
         self.state_path.write_text(json.dumps(self.state, indent=2))
@@ -193,13 +293,45 @@ class Relayer:
         `--finalized` follows the chain's finalized tag (the production rule);
         otherwise the dev default is `latest - confirmations`.
         """
+        if os.environ.get("RBRIDGE_RELAYER_DEBUG"):
+            print("safe_head: querying latest")
         latest = int(cast("block-number", "--rpc-url", ANVIL_RPC))
+        if os.environ.get("RBRIDGE_RELAYER_DEBUG"):
+            print(f"safe_head: latest={latest}")
         if self.finalized:
             block = rpc("eth_getBlockByNumber", ["finalized", False])
             if block:
                 return int(block["number"], 16)
             print("finalized block unavailable; falling back to confirmations")
         return max(0, latest - self.confirmations)
+
+    def stale_deposits(self) -> list[str]:
+        """Settled deposits whose block hash no longer matches the canonical chain.
+
+        This does not depend on the tip hash being journaled, so it also catches a
+        deposit reorged out in the same scan that settled it.
+        """
+        stale = []
+        floor = self.state["last_block"] - self.reorg_window
+        for deposit_id, record in self.state["deposit_blocks"].items():
+            number = int(record.get("block", 0))
+            if number <= floor:
+                continue
+            block = block_at(number)
+            if block is None or block["hash"] != record.get("block_hash"):
+                stale.append(deposit_id)
+        return sorted(stale)
+
+    def halt_for_reorg(self, deposits: list[str], detail: dict) -> bool:
+        self.state["reorgs"].append(detail)
+        self.state["halted"] = {
+            "reason": "processed deposits were reorged out; reconcile before continuing",
+            "at": int(time.time()),
+            "deposits": deposits,
+        }
+        self.save()
+        print(f"REORG: processed deposits {deposits} reorged out; HALTED")
+        return False
 
     def check_reorg(self) -> bool:
         """Detect a reorg at or below the processed tip.
@@ -210,6 +342,19 @@ class Relayer:
         last = self.state["last_block"]
         if last <= 0:
             return True
+
+        stale = self.stale_deposits()
+        if stale:
+            return self.halt_for_reorg(
+                stale,
+                {
+                    "detected_at": int(time.time()),
+                    "previous_tip": last,
+                    "reason": "settled deposit block hash changed",
+                    "deposits": stale,
+                },
+            )
+
         stored = self.state["block_hashes"].get(str(last))
         if not stored:
             block = block_at(last)
@@ -220,6 +365,11 @@ class Relayer:
         current = block_at(last)
         if current and current["hash"] == stored:
             return True
+        print(
+            f"REORG: processed tip {last} changed "
+            f"(stored {stored[:10]}…, now "
+            f"{current['hash'][:10] + '…' if current else 'missing'})"
+        )
 
         ancestor = None
         floor = max(1, last - self.reorg_window)
@@ -244,24 +394,16 @@ class Relayer:
             for deposit_id, record in self.state["failed_deposits"].items()
             if int(record.get("block", 0)) > ancestor
         )
-        self.state["reorgs"].append(
-            {
-                "detected_at": int(time.time()),
-                "previous_tip": last,
-                "ancestor": ancestor,
-                "deposits": affected,
-                "failed_deposits": dropped_failures,
-            }
-        )
+        detail = {
+            "detected_at": int(time.time()),
+            "previous_tip": last,
+            "ancestor": ancestor,
+            "deposits": affected,
+            "failed_deposits": dropped_failures,
+        }
         if affected:
-            self.state["halted"] = {
-                "reason": "processed deposits were reorged out; reconcile before continuing",
-                "at": int(time.time()),
-                "deposits": affected,
-            }
-            self.save()
-            print(f"REORG: processed deposits {affected} reorged out; HALTED")
-            return False
+            return self.halt_for_reorg(affected, detail)
+        self.state["reorgs"].append(detail)
 
         for deposit_id in dropped_failures:
             self.state["failed_deposits"].pop(deposit_id, None)
@@ -279,6 +421,8 @@ class Relayer:
         if self.state["halted"]:
             return
         safe = self.safe_head()
+        if os.environ.get("RBRIDGE_RELAYER_DEBUG"):
+            print(f"scan: last={self.state['last_block']} safe={safe}")
         if safe <= 0:
             return
         if not self.check_reorg():
@@ -306,11 +450,15 @@ class Relayer:
             if deposit["deposit_id"] in self.state["deposits"]:
                 continue
             self.settle_deposit(deposit)
+        recorded_to = self.state["last_block"]
         for number in range(max(start, safe - self.reorg_window + 1), safe + 1):
             block = block_at(number)
-            if block:
-                self.state["block_hashes"][str(number)] = block["hash"]
-        self.state["last_block"] = safe
+            if block is None:
+                print(f"scan: block {number} vanished mid-scan; stopping at {recorded_to}")
+                break
+            self.state["block_hashes"][str(number)] = block["hash"]
+            recorded_to = number
+        self.state["last_block"] = recorded_to if recorded_to < safe else safe
         floor = safe - self.reorg_window
         self.state["block_hashes"] = {
             key: value
@@ -503,21 +651,38 @@ class Relayer:
             f"confirmations={self.confirmations} finalized={self.finalized} "
             f"dry-run={self.dry_run}"
         )
+        debug = bool(os.environ.get("RBRIDGE_RELAYER_DEBUG"))
         while True:
+            if debug:
+                print("loop top")
             reason = self.halted_reason()
             if reason:
-                print(f"relayer halted: {reason}")
-                print("reconcile, then rerun with --reset-state after fixing the cause")
-                return
+                if not self._halted_reported:
+                    print(f"relayer halted: {reason}")
+                    print("reconcile, then rerun with --reset-state after fixing the cause")
+                    self._halted_reported = True
+                if self.http_server is None:
+                    return
+                # Keep /health and /metrics scrapeable while halted.
+                time.sleep(self.interval)
+                continue
+            self._halted_reported = False
             try:
                 self.scan_deposits()
+                if debug:
+                    print("deposits scanned")
                 self.scan_withdrawals()
+                if debug:
+                    print("withdrawals scanned")
             except Exception as error:  # noqa: BLE001 - keep the dev loop alive
                 print(f"relayer error: {error}")
             time.sleep(self.interval)
+            if debug:
+                print("woke")
 
 
 def main() -> int:
+    faulthandler.register(signal.SIGUSR1)
     ap = argparse.ArgumentParser()
     ap.add_argument("--interval", type=float, default=5.0)
     ap.add_argument("--from-block", type=int, default=None)
@@ -529,6 +694,8 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="scan and journal, do not mint/unlock")
     ap.add_argument("--once", action="store_true", help="scan once and exit")
     ap.add_argument("--reset-state", action="store_true")
+    ap.add_argument("--metrics-port", type=int, default=None)
+    ap.add_argument("--metrics-bind", default="127.0.0.1")
     args = ap.parse_args()
 
     if args.reset_state and args.state_file.exists():
@@ -570,6 +737,12 @@ def main() -> int:
         if reason:
             print(f"relayer halted: {reason}")
         return 0
+    if args.metrics_port:
+        relayer.start_http(args.metrics_port, args.metrics_bind)
+        print(
+            f"metrics: http://{args.metrics_bind}:{args.metrics_port}/metrics "
+            f"(health on /health, chains on /v1/chains)"
+        )
     relayer.run()
     return 0
 
