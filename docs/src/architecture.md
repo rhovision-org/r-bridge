@@ -27,7 +27,7 @@ signature is not something those wallets can produce.
 | `rbridge-cli` | `crates/rbridge-cli` | node status, registry, digest |
 | `rbridge-keystore` | `crates/rbridge-keystore` | Web3 v3 keystore create/unlock (scrypt, PBKDF2, AES-128-CTR, keccak MAC), r-wallet compatible |
 | `rbridge-wasm` | `crates/rbridge-wasm` | rholo key, REV address, digest signing, keystore facade, scaling for the web app |
-| web | `web/` | live rholo/vault reads, portfolio, MetaMask ETH/USDT locks (approve + lock), keystore import/create, WASM-signed rholo burn |
+| web | `web/` | live rholo/vault reads, portfolio, MetaMask ETH/USDT locks, TronLink TRX/TRC-20 locks, keystore import/create, WASM-signed rholo burn |
 | rholo contracts | `contracts/rholo` | Phase 1 demo: one Bridge contract + Guard/Ledger libs; the split suite is the production target |
 | native contracts | `contracts/{evm,tron,agoric}` | Ethereum/TVM vault tested; Agoric Zoe escrow/release vat tested at the contract level |
 | relayer implementation | external (rail undecided) | watchers, attestation signers, mint/unlock submission |

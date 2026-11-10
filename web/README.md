@@ -25,17 +25,22 @@ module (next phase).
   connected MetaMask account and offers it as the deposit recipient. The same secp256k1
   key addresses both chains; to sign rholo deploys, export the key from MetaMask and
   encrypt it in Settings (MetaMask itself cannot sign the rholo deploy preimage).
+- **TronLink TRX/TRC-20 deposits**: builds `approve` + `lock` against the configured TVM
+  vault, derives the rholo address from the Tron account (the same 20-byte key payload),
+  and reads TRX/USDT balances in the portfolio. The demo relayer watches Anvil only, so a
+  Tron deposit is not minted here yet; a production rail must watch the TVM vault.
 - **WASM-signed rholo burn** for the withdraw direction: either the imported keystore or
   the dev secret signs the deploy in the browser, and the relayer unlocks on Anvil.
 - **Portfolio** polls every 5 seconds, so a lock that the relayer mints appears as a
   wrapped balance. The Overview shows native ETH and USDT balances for the connected
   MetaMask account and the vault's per-asset locked/fee totals.
 
-Not wired in the UI yet: TronLink/Keplr writes and a MetaMask Snap for signing rholo
-deploys inside MetaMask (today the key is exported and encrypted here). Saved keystore
-copies live in `localStorage` as ciphertext; the password is entered per signing
-operation. The dev secret input is for the devnet only. USDC/DAI remain read-only until
-those tokens are added to a vault deployment.
+Not wired in the UI yet: Tron withdrawals (the unlock watcher and TVM destination
+handling), Keplr writes, and a MetaMask Snap for signing rholo deploys inside MetaMask
+(today the key is exported and encrypted here). Saved keystore copies live in
+`localStorage` as ciphertext; the password is entered per signing operation. The dev
+secret input is for the devnet only. USDC/DAI remain read-only until those tokens are
+added to a vault deployment.
 
 The web build runs `wasm-pack` in `predev`/`pretypecheck`/`prebuild`/`pretest`; it needs
 the Rust toolchain with the `wasm32-unknown-unknown` target and `wasm-pack`.
@@ -61,6 +66,8 @@ Set these in the app's Settings (values come from `.devnet/`):
 | Bridge URI | `.devnet/bridge.json` → `uri` |
 | Anvil vault | `.devnet/evm.json` → `vault` |
 | USDT token | `.devnet/evm.json` → `token` |
+| Tron vault | a Nile/TVM deployment manifest (base58); optional for the demo |
+| TRC-20 USDT | a Nile test token or the mainnet contract; required to test Tron USDT |
 | rholo address | `.devnet/demo-keys.json` → `deployer.rev_address` |
 | Anvil RPC | `http://127.0.0.1:8545` |
 
@@ -96,10 +103,11 @@ make web-e2e                                          # or npm --prefix web run 
 
 Playwright starts its own Anvil on `:8546`, deploys the vault and mock USDT with
 `forge`, mints 2 USDT to Anvil account 0, serves the app on `:4173`, and injects a
-MetaMask-shaped EIP-1193 provider backed by that account. The specs cover the ETH lock,
-the USDT approve+lock, the client-side cap refusal and keystore create/download. They do
-not need the rholo devnet because they stop before mint/burn. Requires Foundry; the CI
-`e2e` job installs Chromium and runs it.
+MetaMask-shaped EIP-1193 provider backed by that account, and a TronLink/TronWeb stub.
+The specs cover the ETH lock, the USDT approve+lock, the TronLink TRC-20 approve+lock,
+the client-side cap refusal and keystore create/download/import. They do not need the
+rholo devnet because they stop before mint/burn. Requires Foundry; the CI `e2e` job
+installs Chromium and runs it.
 
 Live reads are opt-in:
 

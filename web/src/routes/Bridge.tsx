@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { parseUnits, zeroAddress, type Address, type Hash } from "viem";
+import { parseUnits, zeroAddress, type Address } from "viem";
 import { RELAYER_ISSUE } from "../App";
 import { ASSETS, CHAIN_LABEL, type Chain } from "../lib/assets";
 import { loadConfig } from "../lib/config";
@@ -7,7 +7,15 @@ import { lockErc20, lockEth } from "../lib/evm";
 import { keystoreAddress, revAddressFromEth, unlockKeystore } from "../lib/keystore";
 import { loadSavedKeystores } from "../lib/keystore-store";
 import { bridgeDeployTerm, burnCall } from "../lib/rholo";
-import { connectMetaMask } from "../lib/wallets";
+import {
+  getTronWeb,
+  isTronAddress,
+  lockTrc20,
+  lockTrx,
+  TRON_ZERO_ADDRESS,
+  tronBase58ToEth,
+} from "../lib/tron";
+import { connectMetaMask, connectTronLink } from "../lib/wallets";
 
 type Direction = "deposit" | "withdraw";
 
@@ -32,27 +40,33 @@ export default function Bridge() {
   const [savedKeystores] = useState(() => loadSavedKeystores());
   const [account, setAccount] = useState<Address | null>(null);
   const [metaMaskRev, setMetaMaskRev] = useState<string | null>(null);
+  const [tronAccount, setTronAccount] = useState<string | null>(null);
+  const [tronRev, setTronRev] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tx, setTx] = useState<Hash | null>(null);
-  const [approveTx, setApproveTx] = useState<Hash | null>(null);
+  const [tx, setTx] = useState<string | null>(null);
+  const [approveTx, setApproveTx] = useState<string | null>(null);
   const [withdrawal, setWithdrawal] = useState<WithdrawalState | null>(null);
 
-  // The demo vault has ETH and USDT; the other registry assets are read-only until
-  // they are added to a deployment.
-  const chainAssets = useMemo(
-    () =>
-      ASSETS.filter(
-        (asset) =>
-          asset.chain === chain &&
-          asset.enabled &&
-          (chain !== "ethereum" || asset.id === "eth" || asset.id === "usdt"),
-      ),
-    [chain],
-  );
+  // Deployment assets only: ETH/USDT on the TVM vault, ETH/USDT on Anvil. Other
+  // registry assets stay read-only until they are in a deployment.
+  const chainAssets = useMemo(() => {
+    const deployed =
+      chain === "ethereum"
+        ? ["eth", "usdt"]
+        : chain === "tron"
+          ? ["trx", "usdt"]
+          : undefined;
+    return ASSETS.filter(
+      (asset) =>
+        asset.chain === chain &&
+        asset.enabled &&
+        (deployed === undefined || deployed.includes(asset.id)),
+    );
+  }, [chain]);
   const asset = chainAssets.find((candidate) => candidate.id === assetId) ?? chainAssets[0];
   const erc20Configured = /^0x[0-9a-fA-F]{40}$/.test(config.usdtToken);
-  const token: Address | null =
+  const evmToken: Address | null =
     chain !== "ethereum"
       ? null
       : asset?.id === "eth"
@@ -60,16 +74,31 @@ export default function Bridge() {
         : asset?.id === "usdt" && erc20Configured
           ? (config.usdtToken as Address)
           : null;
-  const supported = chain === "ethereum" && token !== null;
+  const tronVaultConfigured = isTronAddress(config.tronVault);
+  const tronToken: string | null =
+    chain !== "tron"
+      ? null
+      : asset?.id === "trx"
+        ? TRON_ZERO_ADDRESS
+        : asset?.id === "usdt" && isTronAddress(config.tronUsdt)
+          ? config.tronUsdt
+          : null;
+  const supported =
+    (chain === "ethereum" && evmToken !== null) ||
+    (chain === "tron" && tronToken !== null && tronVaultConfigured);
+  const lockToken = chain === "tron" ? tronToken : evmToken;
+  const needsApproval =
+    lockToken !== null && lockToken !== zeroAddress && lockToken !== TRON_ZERO_ADDRESS;
+  const lockAccount = chain === "ethereum" ? account : chain === "tron" ? tronAccount : null;
   const canLock =
     direction === "deposit" &&
     supported &&
-    Boolean(config.vault) &&
-    Boolean(account) &&
+    Boolean(lockAccount) &&
     Number(amount) > 0;
   const canBurn =
     direction === "withdraw" &&
-    supported &&
+    chain === "ethereum" &&
+    evmToken !== null &&
     Boolean(config.bridgeUri) &&
     (Boolean(keystoreJson) ? Boolean(keystorePassword) : Boolean(rholoSecret)) &&
     Number(amount) > 0 &&
@@ -90,10 +119,32 @@ export default function Bridge() {
     }
   }
 
+  async function connectTron() {
+    setError(null);
+    try {
+      const address = await connectTronLink();
+      setTronAccount(address);
+      const web = getTronWeb();
+      if (web) {
+        try {
+          setTronRev(await revAddressFromEth(tronBase58ToEth(web, address)));
+        } catch {
+          setTronRev(null);
+        }
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   async function lock() {
     setError(null);
     setTx(null);
     setApproveTx(null);
+    if (chain === "tron") {
+      await lockOnTron();
+      return;
+    }
     if (!config.vault) {
       setError("Set the vault address in Settings first.");
       return;
@@ -102,12 +153,8 @@ export default function Bridge() {
       setError("Connect MetaMask first.");
       return;
     }
-    if (!token) {
-      setError(
-        chain === "ethereum"
-          ? "Set the USDT token address in Settings first."
-          : "Native → rholo writes are wired for Ethereum in this demo. Tron and Agoric use the same vault/vat; see the harness.",
-      );
+    if (!evmToken) {
+      setError("Set the USDT token address in Settings first.");
       return;
     }
     if (!recipient) {
@@ -116,7 +163,7 @@ export default function Bridge() {
     }
     setBusy(true);
     try {
-      if (token === zeroAddress) {
+      if (evmToken === zeroAddress) {
         const hash = await lockEth({
           vault: config.vault as Address,
           amountEth: amount,
@@ -129,12 +176,64 @@ export default function Bridge() {
       } else {
         const result = await lockErc20({
           vault: config.vault as Address,
-          token,
+          token: evmToken,
           amount,
           rholoRecipient: recipient,
           nonce: Date.now(),
           account,
           rpc: config.anvilRpc,
+        });
+        setApproveTx(result.approve ?? null);
+        setTx(result.lock);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function lockOnTron() {
+    if (!tronVaultConfigured) {
+      setError("Set the Tron vault address in Settings first.");
+      return;
+    }
+    if (!tronToken) {
+      setError("Set the TRC-20 USDT address in Settings first.");
+      return;
+    }
+    const web = getTronWeb();
+    if (!web || !tronAccount) {
+      setError("Connect TronLink first.");
+      return;
+    }
+    if (!recipient) {
+      setError("Enter a rholo recipient.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const nonce = Date.now();
+      if (tronToken === TRON_ZERO_ADDRESS) {
+        setTx(
+          await lockTrx({
+            tronWeb: web,
+            vault: config.tronVault,
+            amount,
+            rholoRecipient: recipient,
+            nonce,
+            owner: tronAccount,
+          }),
+        );
+      } else {
+        const result = await lockTrc20({
+          tronWeb: web,
+          vault: config.tronVault,
+          token: tronToken,
+          amount,
+          rholoRecipient: recipient,
+          nonce,
+          owner: tronAccount,
         });
         setApproveTx(result.approve ?? null);
         setTx(result.lock);
@@ -255,7 +354,9 @@ export default function Bridge() {
         <p className="notice">
           ETH and ERC-20 (USDT) deposit and withdraw are live against the configured
           rails. The relayer (or <span className="mono">make relayer-watch</span> in the
-          demo) mints after a native lock and unlocks after a rholo burn. The rholo
+          demo) mints after a native lock and unlocks after a rholo burn. Tron deposits
+          build and sign the TVM `approve` + `lock` through TronLink, but the demo
+          relayer watches Anvil only, so nothing is minted from Tron here. The rholo
           signer below is a devnet key; never use one holding real value.
         </p>
       </section>
@@ -392,24 +493,50 @@ export default function Bridge() {
           </>
         ) : null}
 
-        {!account ? (
-          <button type="button" onClick={connect}>
-            Connect MetaMask
-          </button>
+        {chain === "ethereum" ? (
+          !account ? (
+            <button type="button" onClick={connect}>
+              Connect MetaMask
+            </button>
+          ) : (
+            <>
+              <p className="mono">MetaMask: {account}</p>
+              {metaMaskRev ? (
+                <p className="mono hint">
+                  rholo address: {metaMaskRev}{" "}
+                  {direction === "deposit" ? (
+                    <button type="button" onClick={() => setRecipient(metaMaskRev)}>
+                      Use as recipient
+                    </button>
+                  ) : null}
+                </p>
+              ) : null}
+            </>
+          )
+        ) : chain === "tron" ? (
+          !tronAccount ? (
+            <button type="button" onClick={connectTron}>
+              Connect TronLink
+            </button>
+          ) : (
+            <>
+              <p className="mono">TronLink: {tronAccount}</p>
+              {tronRev ? (
+                <p className="mono hint">
+                  rholo address: {tronRev}{" "}
+                  {direction === "deposit" ? (
+                    <button type="button" onClick={() => setRecipient(tronRev)}>
+                      Use as recipient
+                    </button>
+                  ) : null}
+                </p>
+              ) : null}
+            </>
+          )
         ) : (
-          <>
-            <p className="mono">MetaMask: {account}</p>
-            {metaMaskRev ? (
-              <p className="mono hint">
-                rholo address: {metaMaskRev}{" "}
-                {direction === "deposit" ? (
-                  <button type="button" onClick={() => setRecipient(metaMaskRev)}>
-                    Use as recipient
-                  </button>
-                ) : null}
-              </p>
-            ) : null}
-          </>
+          <p className="hint">
+            Agoric writes use Keplr and the Zoe vat; they are not wired in this demo.
+          </p>
         )}
 
         <button
@@ -420,7 +547,7 @@ export default function Bridge() {
           {busy
             ? "Submitting…"
             : direction === "deposit"
-              ? token && token !== zeroAddress
+              ? needsApproval
                 ? "Approve and lock"
                 : "Lock and mint"
               : "Burn and unlock"}
@@ -429,7 +556,15 @@ export default function Bridge() {
           <p className="hint">
             {chain === "ethereum" && asset?.id === "usdt"
               ? "Set the USDT token address in Settings (from .devnet/evm.json → token) to lock the ERC-20."
-              : "Writes in this UI are wired for Ethereum (ETH and USDT through MetaMask). Tron and Agoric use the same contracts and are covered by the harness and tests."}
+              : chain === "tron"
+                ? "Set the Tron vault and TRC-20 USDT addresses in Settings to lock through TronLink."
+                : "Writes in this UI are wired for Ethereum and Tron. Agoric uses the same contracts and is covered by the harness and tests."}
+          </p>
+        ) : null}
+        {direction === "withdraw" && chain !== "ethereum" ? (
+          <p className="hint">
+            rholo → native withdrawal is wired for Ethereum in this demo. A Tron or
+            Agoric unlock needs that chain's watcher and vault/vat adapter.
           </p>
         ) : null}
         {error ? <p className="error">{error}</p> : null}
@@ -440,8 +575,10 @@ export default function Bridge() {
         ) : null}
         {tx ? (
           <p className="hint">
-            Lock submitted: <span className="mono">{tx}</span>. The relayer will attest
-            and mint; the wrapped balance appears on the Overview page.
+            Lock submitted: <span className="mono">{tx}</span>.{" "}
+            {chain === "tron"
+              ? "The demo relayer watches Anvil only, so a Tron deposit is not minted here; a production rail must watch the TVM vault."
+              : "The relayer will attest and mint; the wrapped balance appears on the Overview page."}
           </p>
         ) : null}
         {withdrawal ? (
@@ -460,6 +597,10 @@ export default function Bridge() {
           <li>rholo bridge reads via exploratory deploy (no key needed).</li>
           <li>Anvil vault deposits, thresholds, caps and fee accounting (10 Foundry tests).</li>
           <li>MetaMask ETH and USDT locks (approve + lock) and WASM-signed rholo burn.</li>
+          <li>
+            TronLink TRX/TRC-20 deposit calls against the same vault source; no Tron
+            watcher runs in this demo.
+          </li>
           <li>
             Relayer watcher (<span className="mono">make relayer-watch</span>) minting on
             rholo and unlocking on Anvil.

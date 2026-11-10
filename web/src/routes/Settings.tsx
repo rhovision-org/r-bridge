@@ -195,6 +195,24 @@ export default function Settings() {
           />
         </div>
         <div className="row">
+          <label htmlFor="tron-vault">Tron vault (base58)</label>
+          <input
+            id="tron-vault"
+            placeholder="T…"
+            value={config.tronVault}
+            onChange={(event) => set("tronVault", event.target.value)}
+          />
+        </div>
+        <div className="row">
+          <label htmlFor="tron-usdt">TRC-20 USDT</label>
+          <input
+            id="tron-usdt"
+            placeholder="T…"
+            value={config.tronUsdt}
+            onChange={(event) => set("tronUsdt", event.target.value)}
+          />
+        </div>
+        <div className="row">
           <label htmlFor="rholo">rholo address</label>
           <input
             id="rholo"

@@ -3,8 +3,9 @@
  *
  * r-bridge does not create or store native-chain keys. MetaMask handles Ethereum,
  * TronLink handles Tron and Keplr handles Cosmos/Agoric. The only account this app
- * stores is the rholo account, which lives in the WASM keystore (next phase).
+ * stores is the rholo account, in the WASM keystore.
  */
+import type { TronWebLike } from "./tron";
 
 interface Eip1193Provider {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
@@ -13,10 +14,6 @@ interface Eip1193Provider {
 
 interface TronLinkProvider {
   request(args: { method: string }): Promise<{ code?: number; message?: string }>;
-}
-
-interface TronWebLike {
-  defaultAddress?: { base58?: string };
 }
 
 interface KeplrLike {

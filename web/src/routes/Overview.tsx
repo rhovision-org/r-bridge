@@ -16,6 +16,7 @@ import {
   readVaultStatus,
   type VaultStatus,
 } from "../lib/evm";
+import { getTronWeb, isTronAddress, readTrc20Balance, readTrxBalance } from "../lib/tron";
 import { WALLET_FOR_CHAIN } from "../lib/wallets";
 
 const CHAINS: Chain[] = ["ethereum", "tron", "agoric"];
@@ -33,6 +34,8 @@ export default function Overview() {
   const [balances, setBalances] = useState<Record<string, number | null>>({});
   const [ethBalance, setEthBalance] = useState<bigint | null>(null);
   const [usdtBalance, setUsdtBalance] = useState<bigint | null>(null);
+  const [trxBalance, setTrxBalance] = useState<bigint | null>(null);
+  const [tronUsdtBalance, setTronUsdtBalance] = useState<bigint | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -111,6 +114,25 @@ export default function Overview() {
           }
         }
       }
+
+      const tronAddress = addresses.tron;
+      const tronWeb = getTronWeb();
+      if (tronAddress && tronWeb) {
+        try {
+          const balance = await readTrxBalance(tronWeb, tronAddress);
+          if (active) setTrxBalance(balance);
+        } catch {
+          if (active) setTrxBalance(null);
+        }
+        if (isTronAddress(config.tronUsdt)) {
+          try {
+            const balance = await readTrc20Balance(tronWeb, config.tronUsdt, tronAddress);
+            if (active) setTronUsdtBalance(balance);
+          } catch {
+            if (active) setTronUsdtBalance(null);
+          }
+        }
+      }
     }
 
     load();
@@ -119,7 +141,7 @@ export default function Overview() {
       active = false;
       clearInterval(timer);
     };
-  }, [config, addresses.ethereum]);
+  }, [config, addresses.ethereum, addresses.tron]);
 
   async function connect(chain: Chain) {
     setBusy((current) => ({ ...current, [chain]: true }));
@@ -278,7 +300,13 @@ export default function Overview() {
                     ? `${formatEther(ethBalance)} ETH`
                     : asset.chain === "ethereum" && asset.id === "usdt" && usdtBalance !== null
                       ? `${formatNative(usdtBalance, 6)} USDT`
-                      : "—";
+                      : asset.chain === "tron" && asset.id === "trx" && trxBalance !== null
+                        ? `${formatNative(trxBalance, 6)} TRX`
+                        : asset.chain === "tron" &&
+                            asset.id === "usdt" &&
+                            tronUsdtBalance !== null
+                          ? `${formatNative(tronUsdtBalance, 6)} USDT`
+                          : "—";
                 return (
                   <tr key={key}>
                     <td>{CHAIN_LABEL[asset.chain]}</td>

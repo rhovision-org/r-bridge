@@ -43,5 +43,9 @@ estimates.
 
 ## Status
 
-Source reuse and the digest are tested on EVM. Tron deployment and TVM tests are pending a
-local Tron node/Nile pass; no mainnet deployment before the audit.
+Source reuse and the digest are tested on EVM. The dApp now builds and signs the TRX and
+TRC-20 `approve` + `lock` calls through TronLink, derives the rholo address from the Tron
+account, and reads balances; its calls are covered by unit tests with a TronWeb stub and
+a Playwright browser spec. Tron deployment, TVM tests, the Tron watcher and Tron
+withdrawals are still pending a local Tron node/Nile pass; no mainnet deployment before
+the audit.

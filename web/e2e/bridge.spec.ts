@@ -32,10 +32,54 @@ async function configure(page: Page): Promise<void> {
           bridgeUri: "",
           vault: config.vault,
           usdtToken: config.token,
+          tronVault: "TWS1Y2r3j4v5w6x7y8z9A1B2C3D4E5F6G7",
+          tronUsdt: "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj",
           rholoAddress: "",
           anvilRpc: config.rpc,
         }),
       );
+
+      const tronCalls: Array<Record<string, unknown>> = [];
+      (window as unknown as { __tronCalls: unknown }).__tronCalls = tronCalls;
+      const owner = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+      const ownerHex = `41${"11".repeat(20)}`;
+      (window as unknown as { tronLink: unknown }).tronLink = {
+        request: async () => ({ code: 200 }),
+      };
+      (window as unknown as { tronWeb: unknown }).tronWeb = {
+        defaultAddress: { base58: owner, hex: ownerHex },
+        address: { toHex: () => ownerHex },
+        contract: () => ({
+          at: async (address: string) => ({
+            allowance: () => ({
+              call: async () => {
+                tronCalls.push({ op: "allowance", address });
+                return { toString: () => "0" };
+              },
+            }),
+            approve: (spender: string, amount: string) => ({
+              send: async () => {
+                tronCalls.push({ op: "approve", spender, amount });
+                return "approve-tx";
+              },
+            }),
+            balanceOf: () => ({ call: async () => "0" }),
+            lock: (token: string, amount: string, recipient: string, nonce: string) => ({
+              send: async (options?: Record<string, unknown>) => {
+                tronCalls.push({ op: "lock", token, amount, recipient, nonce, options });
+                return "lock-tx";
+              },
+            }),
+          }),
+        }),
+        trx: {
+          getBalance: async () => "9000000",
+          getTransactionInfo: async (txid: string) => ({
+            id: txid,
+            receipt: { result: "SUCCESS" },
+          }),
+        },
+      };
 
       let nextId = 1;
       Object.defineProperty(window, "ethereum", {
@@ -116,6 +160,43 @@ test("approves and locks USDT", async ({ page }) => {
   await expect(page.getByText(/Lock submitted: 0x/)).toBeVisible();
   await page.goto("/#/");
   await expect(page.getByText(/locked 1 USDT/)).toBeVisible();
+});
+
+test("builds a TronLink approve and lock for TRC-20 USDT", async ({ page }) => {
+  await page.goto("/#/bridge");
+  await page.getByLabel("Chain").selectOption("tron");
+  await page.getByRole("button", { name: "Connect TronLink" }).click();
+  await expect(page.getByText(/TronLink: TR7N/)).toBeVisible();
+  await expect(page.getByText(/rholo address: 1111/)).toBeVisible();
+  await page.getByRole("button", { name: "Use as recipient" }).click();
+  await expect(page.getByLabel("rholo recipient")).toHaveValue(/^1111/);
+
+  await page.getByLabel("Asset").selectOption("usdt");
+  await page.getByLabel("Amount").fill("1");
+  await page.getByRole("button", { name: "Approve and lock" }).click();
+
+  await expect(page.getByText(/Approval mined: approve-tx/)).toBeVisible();
+  await expect(page.getByText(/Lock submitted: lock-tx/)).toBeVisible();
+  await expect(page.getByText(/a Tron deposit is not minted here/)).toBeVisible();
+
+  const calls = await page.evaluate(
+    () =>
+      (window as unknown as { __tronCalls: Array<Record<string, unknown>> }).__tronCalls,
+  );
+  expect(calls.filter((call) => call.op === "approve")).toHaveLength(1);
+  const lock = calls.find((call) => call.op === "lock");
+  expect(lock).toMatchObject({
+    token: "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj",
+    amount: "1000000",
+    recipient: expect.stringMatching(/^1111/),
+  });
+});
+
+test("shows Tron balances after TronLink connects", async ({ page }) => {
+  await page.goto("/#/");
+  await page.getByRole("button", { name: "Connect TronLink" }).click();
+  await expect(page.getByText(/TR7NHqje/)).toBeVisible();
+  await expect(page.getByText(/9 TRX/)).toBeVisible();
 });
 
 test("refuses an amount above the vault cap before sending", async ({ page }) => {

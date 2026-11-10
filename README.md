@@ -152,15 +152,16 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
   funds via the admin refund. The safe-head gate and reorg journal pass
   `make reorg-demo`: an unprocessed rollback rewinds, a reorged settled deposit halts.
 - Web demo: live rholo bridge/vault reads, MetaMask ETH and USDT locks (approve +
-  lock), a WASM-signed rholo burn for withdraw, and rholo keystore create/import/load
-  (Web3 v3, r-wallet compatible; save to device or keep an encrypted copy in the
-  browser; MetaMask keys work as rholo keys); 26 unit + 5 Playwright browser tests + 5
-  opt-in live tests pass, and a Node smoke test signs and submits a burn through the
-  wasm client.
+  lock), TronLink TRX/TRC-20 deposits against the TVM vault, a WASM-signed rholo burn
+  for withdraw, and rholo keystore create/import/load (Web3 v3, r-wallet compatible;
+  save to device or keep an encrypted copy in the browser; MetaMask keys work as rholo
+  keys); 36 unit + 7 Playwright browser tests + 5 opt-in live tests pass, and a Node
+  smoke test signs and submits a burn through the wasm client.
 - Agoric vat: Zoe escrow/release contract passes deposit, 2-of-3 release, replay,
   below-threshold and wrong-digest tests. No live Agoric chain/IBC or Agoric watcher yet.
 - Not yet: Sepolia/Nile deployment, live Agoric/IBC, multi-validator/testnet finality,
-  production relayer, TronLink/Keplr writes, a MetaMask Snap for direct rholo signing.
+  production relayer, Tron watcher/withdrawals, Keplr writes, a MetaMask Snap for direct
+  rholo signing.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its
