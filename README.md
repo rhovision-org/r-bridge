@@ -48,7 +48,7 @@ the choice. See `docs/src/infrastructure-decision.md`.
 | Web dApp | `web/` |
 | Rholang bridge contract (demo) | `contracts/rholo/` |
 | Ethereum/TVM vault | `contracts/evm/` (Tron reuse in `contracts/tron/`) |
-| Agoric vat (planned) | `contracts/agoric/` |
+| Agoric escrow vat (Zoe) | `contracts/agoric/` |
 | Dev harness + mock relayer | `harness/` |
 | Specs | `spec/` |
 | Book | `docs/` |
@@ -143,8 +143,10 @@ Live reads are tested against the devnet with `RBRIDGE_LIVE=1`; see `web/README.
 - Web demo: live rholo bridge/vault reads, MetaMask ETH lock, and a WASM-signed rholo
   burn for withdraw; 9 unit + 3 live-read tests pass, and a Node smoke test signs and
   submits a burn through the wasm client.
-- Not yet: Sepolia/Nile/Agoric deployment, reorg handling, multi-validator finality,
-  production relayer, ERC-20/TronLink/Keplr writes, production web keystore.
+- Agoric vat: Zoe escrow/release contract passes deposit, 2-of-3 release, replay,
+  below-threshold and wrong-digest tests. No live Agoric chain/IBC or Agoric watcher yet.
+- Not yet: Sepolia/Nile deployment, live Agoric/IBC, reorg handling, multi-validator
+  finality, production relayer, ERC-20/TronLink/Keplr writes, production web keystore.
 
 The devnet is a single validator, which can report `finalized: false` even after
 `ProcessedWithSuccess` (rholo issue #356). The demo uses the processed result as its

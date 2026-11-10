@@ -32,6 +32,18 @@ jobs:
           version: "v1.9.0"
       - run: forge test --root contracts/evm -vv
 
+  agoric:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: contracts/agoric/package-lock.json
+      - run: npm ci --prefix contracts/agoric --legacy-peer-deps
+      - run: npm test --prefix contracts/agoric
+
   web:
     runs-on: ubuntu-latest
     steps:

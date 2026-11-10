@@ -1,31 +1,62 @@
-# Agoric vat (planned)
+# Agoric escrow vat (Zoe)
 
-Agoric is a Cosmos SDK chain; the Cosmos leg is a vat that holds IBC denoms and pays
-out on attested burns. Keplr signs the user's deposit offer.
+`src/bridge-vat.js` is a Zoe contract that holds an external asset (the issuer passed as
+`Collateral`, representing an IBC denom on Agoric) in a contract-owned seat. A deposit
+invitation records the amount and rholo recipient; a release invitation verifies the
+m-of-n relayer attestation over the canonical withdrawal digest and pays the escrowed
+asset to the recipient.
 
-## Design
+## API
 
-- The vat holds the canonical IBC assets (ATOM from the Cosmos Hub, USDC from Noble,
-  USDT from a registered denom, IST native to Agoric) in its own account.
-- A user deposits with a Zoe offer: `give` the IBC asset, `want` a receipt/record, and
-  include the rholo recipient in the offer terms. The vat records the deposit and emits
-  an event/offer result.
-- The node relayer watches the vat/offer result and attests the deposit to rholo.
-- On a rholo burn, the relayer submits a release offer to the vat; the vat verifies the
-  m-of-n rholo burn attestation (secp256k1 in JS) and pays the destination Agoric
-  address. The user can then IBC-transfer onward.
-- ERTP is the token model on both sides; OCapN is the preferred transport for
-  notifications/reads between the vat and rholo. The mint authority remains the m-of-n
-  attestation, not a single vat capability.
+- `makeDepositInvitation(rholoRecipient)` — the user offers `give: { Collateral: amount }`
+  and receives a deposit record `{ depositId, amount, rholoRecipient }`.
+- `makeReleaseInvitation({ withdrawalId, amountValue, recipient, nonce, signatures })` —
+  verifies the attestation and creates a one-shot invitation. The recipient offers
+  `want: { Collateral: amountValue }` and receives the escrowed asset as a payout.
+- `getDeposits()` — records for the relayer.
+- `getRelayerConfig()` — the relayer set and threshold.
 
-## Assets
+## Attestation encoding
 
-ATOM, IST, USDC (Noble IBC), USDT only when a denom is registered. Record the full IBC
-denom in the deployment manifest; denoms are network-specific.
+The digest is the shared r-bridge withdrawal message:
 
-## Tests
+```
+rbridge:v1|<network>|agoric|<bridgeId>|<assetKey>|withdraw|
+<withdrawalId>|<amount>|<recipient>|<nonce>
+```
 
-Local Agoric chain with mocked IBC denoms first; then an Agoric testnet with Noble USDC.
-Test deposit offer, attestation verification, release offer, duplicate suppression,
-wrong denom, threshold refusal and conservation. OCapN integration is a phase-5
-hardening item; the v1 path is relayer attestation.
+keccak256 over the UTF-8 bytes. Signatures are **64-byte compact secp256k1** over that
+digest, verified with `@noble/secp256k1` (`prehash: false`). rholo uses DER and the
+EVM/Tron vault uses `r||s||v`; the same relayer key can emit each chain's encoding from
+the same digest. The vat also accepts the rholo burn amount as a BigInt and checks the
+escrow balance with `AmountMath.isGTE`.
+
+## Run the tests
+
+```bash
+npm install --legacy-peer-deps
+npm test
+```
+
+The tests use the SwingSet test environment directly (not ava): the current Agoric/Endo
+ava wrapper has a version mismatch in this checkout. They cover deposit escrow, a 2-of-3
+release, replay refusal, below-threshold refusal and wrong-digest refusal.
+
+## Version pinning
+
+The Agoric 0.27 / Zoe 0.27 packages need a coherent Endo/SES tree. The package.json pins
+the Endo versions Agoric 0.27 was built against and overrides `ses` to `1.14.0`; newer
+SES compartments omit `Float64Array`, which the ZCF bundle's marshal uses. `@noble/curves`
+is not used in the vat because its bundled FFT module uses a direct `eval`, which SES
+rejects; `@noble/secp256k1` is used instead (compact signatures only).
+
+## What is proven, and what is not
+
+Proven at the Zoe level: escrow, m-of-n attestation verification, one-shot release and
+refusals.
+
+Not yet: a live Agoric chain/IBC denoms, a relayer watching Agoric offers, durable
+baggage stores, and binding the release invitation to an Agoric account address. In this
+demo the release invitation is a bearer capability delivered to the recipient, and the
+deposit/used-id maps are closure state. A production vat uses durable stores and the
+recipient's account/key binding. The relayer rail decision also applies here.

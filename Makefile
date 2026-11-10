@@ -4,7 +4,7 @@ RHOLO_DIR ?= ../RNodeRust
 NODE ?= http://localhost:40403
 FORGE ?= $(HOME)/.foundry/bin/forge
 
-.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer e2e-evm relayer-watch
+.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build agoric-install agoric-test web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer e2e-evm relayer-watch
 
 fmt:
 	cargo fmt --all --check
@@ -31,6 +31,12 @@ evm-build:
 
 evm-test:
 	$(FORGE) test --root contracts/evm -vv
+
+agoric-install:
+	npm --prefix contracts/agoric ci --legacy-peer-deps
+
+agoric-test:
+	npm --prefix contracts/agoric test
 
 web-install:
 	npm --prefix web install

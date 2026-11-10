@@ -42,8 +42,11 @@ digest = keccak256(utf8(message))
 - EVM/Tron: the same key and digest, with the signature split into `(r, s, v)` and
   verified by `ECDSA.recover(digest, v, r, s)`. Do not use `personal_sign` or EIP-191:
   the prefix would change the digest.
-- Agoric vat: verify with `@noble/curves` secp256k1 over the 32-byte digest, DER or
-  `(r,s)` as the vat's library expects; pin the library version.
+- Agoric vat: the same 32-byte digest, signed as a **64-byte compact** secp256k1
+  signature and verified with `@noble/secp256k1` (`prehash: false`). The relayer emits
+  compact for Agoric; rholo uses DER and EVM/Tron use `r||s||v` over the same digest.
+  `@noble/curves` is not used in the vat because its bundled FFT module contains a direct
+  `eval`, which SES rejects.
 
 A relayer set is `m-of-n` with 65-byte uncompressed secp256k1 public keys, lowercase hex.
 The threshold is met when at least `m` **distinct** keys in the set produce a valid
@@ -111,8 +114,9 @@ d2f0ca0220d37d6a5cb5f3061140f864b967f6d7fe3596f1f330faeba263e805
 ```
 
 The EVM test `testWithdrawalDigestMatchesRustGolden` pins this value; the rholo and Agoric
-implementations must reproduce it as well. For a Tron destination, `recipient` is the
-lowercase `0x` form of the Tron address; base58 is display-only.
+implementations must reproduce it as well (the Agoric encoding of the signature is compact,
+not DER). For a Tron destination, `recipient` is the lowercase `0x` form of the Tron
+address; base58 is display-only.
 
 ## Versioning
 
