@@ -71,17 +71,30 @@ rholo and the 65-byte form for the vault: `rbridge sign-text-eth --key … --tex
 `rbridge sign-digest-eth --key … --digest …` (the latter is also useful to a relayer).
 `rbridge key-info` reports the Ethereum address of a key alongside its REV address.
 
+## Hyperlane peer
+
+`src/HyperlanePeer.sol` is a standalone single-asset Hyperlane endpoint; the attested
+`BridgeVault` is unchanged. `lock` pulls an ERC-20, scales native units to rholo units,
+derives a deposit id from `keccak256(chainid, peer, sender, nonce)`, and dispatches the
+canonical deposit payload through the Mailbox. `handle(origin, sender, body)` requires the
+Mailbox caller and the enrolled origin/sender, parses the withdraw payload, refuses a used
+withdrawal id, and releases `rholoAmount × scale`. It declares the Hyperlane interfaces
+locally and has no external dependencies.
+
 ## Tests
 
 ```bash
 forge test --root contracts/evm -vv
 ```
 
-10 tests: ERC-20 lock/unlock, ETH lock/unlock with 18→8 scale, fee retention and treasury
-withdrawal, 2-of-3 admin refund of a failed deposit (including replay and below-threshold
-refusals), below-threshold/duplicate-signer/wrong-digest unlock refusals, pause blocks
-lock but not unlock, admin threshold and replay, max deposit and nonce replay, and the
-shared Rust/EVM withdrawal digest golden vector (`d2f0ca02…e805`).
+21 tests. The 10 vault tests cover ERC-20 lock/unlock, ETH lock/unlock with 18→8 scale, fee
+retention and treasury withdrawal, 2-of-3 admin refund of a failed deposit (including
+replay and below-threshold refusals), below-threshold/duplicate-signer/wrong-digest unlock
+refusals, pause blocks lock but not unlock, admin threshold and replay, max deposit and
+nonce replay, and the shared Rust/EVM withdrawal digest golden vector (`d2f0ca02…e805`).
+The 11 peer tests cover lock→dispatch, handle→release, replay/sender/origin/asset refusals,
+direct-handle refusal, pause, dust refusal, and the shared Hyperlane message-id and
+checkpoint golden vectors.
 
 The `script/DeployAnvil.s.sol` script deploys an ETH-only vault to local Anvil for the
 cross-chain demo (`make e2e-evm`).

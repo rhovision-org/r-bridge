@@ -4,7 +4,7 @@ RHOLO_DIR ?= ../RNodeRust
 NODE ?= http://localhost:40403
 FORGE ?= $(HOME)/.foundry/bin/forge
 
-.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build agoric-install agoric-test web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer e2e-evm relayer-watch refund-failed reorg-demo metrics-demo api-demo deploy-demo deploy-sepolia verify-sepolia
+.PHONY: fmt clippy test wasm rust-check build-contracts contracts-check evm-test evm-build agoric-install agoric-test web-install web-check web-e2e docs docs-check check clean devnet-up devnet-down demo mock-relayer e2e-evm relayer-watch refund-failed reorg-demo metrics-demo api-demo deploy-demo deploy-sepolia verify-sepolia hyperlane-demo hyperlane-bridge-demo
 
 fmt:
 	cargo fmt --all --check
@@ -66,6 +66,15 @@ demo: build-contracts
 
 mock-relayer:
 	$(PY) harness/mock_relayer.py
+
+# Hyperlane v3 on rholo: install the Mailbox/merkle-hook/ISM suite and run 59 checks.
+# Requires a running rholo devnet (`make devnet-up`).
+hyperlane-demo:
+	$(PY) harness/hyperlane_demo.py
+
+# The wired Bridge + Hyperlane term: inbound mint, burn -> dispatch, multisig, refusals.
+hyperlane-bridge-demo:
+	$(PY) harness/hyperlane_bridge_demo.py
 
 # Requires Anvil on :8545 and a rholo devnet with a bridge installed (`make demo`).
 e2e-evm:

@@ -1,0 +1,112 @@
+// Hyperlane interchain security modules.
+//
+// v1 has two modules behind the same `verify`/`moduleType` surface:
+// - hyperlaneTestIsm: a switchable verdict for development and refusal tests.
+// - hyperlaneTrustedRelayerIsm: accepts only a message whose Mailbox processor is the
+//   configured relayer. This is Hyperlane's TrustedRelayerISM.
+//
+// The Mailbox passes the processor id it is about to record as a fourth argument. This
+// avoids a call back into the Mailbox while its single state cell is consumed, which
+// would deadlock in Rholang. The three-argument form is kept for the standard interface
+// and refuses unless an empty processor happens to match the configuration.
+//
+// The multisig module (checkpoint signatures over message ids) lives in a later phase.
+
+contract hyperlaneTestIsm(@"moduleType", ret) = { ret!(6) } |
+
+contract hyperlaneTestIsm(@"verify", @metadata, @message, ret) = {
+  hyperlaneTestIsm!("verify", metadata, message, "", *ret)
+} |
+
+contract hyperlaneTestIsm(@"verify", @metadata, @message, @processor, ret) = {
+  for (@s <- ismState) {
+    ismState!(s) |
+    ret!(s.get("accept"))
+  }
+} |
+
+contract hyperlaneTestIsm(@"setAccept", @value, ret) = {
+  for (@s <- ismState) {
+    ismState!(s.set("accept", value)) |
+    ret!(true)
+  }
+} |
+
+// Devnet configuration arm: the trusted module reads the same shared ismState. Production
+// fixes the relayer at install and omits this arm.
+contract hyperlaneTestIsm(@"setTrustedRelayer", @value, ret) = {
+  for (@s <- ismState) {
+    ismState!(s.set("trustedRelayer", value)) |
+    ret!(true)
+  }
+} |
+
+// Hyperlane's TrustedRelayerIsm: the message is accepted when the Mailbox records the
+// configured relayer as its processor. `processor` is a lowercase hex bytes32 id.
+contract hyperlaneTrustedRelayerIsm(@"moduleType", ret) = { ret!(6) } |
+
+contract hyperlaneTrustedRelayerIsm(@"verify", @metadata, @message, ret) = {
+  hyperlaneTrustedRelayerIsm!("verify", metadata, message, "", *ret)
+} |
+
+contract hyperlaneTrustedRelayerIsm(@"verify", @metadata, @message, @processor, ret) = {
+  for (@s <- ismState) {
+    ismState!(s) |
+    ret!(processor == s.get("trustedRelayer"))
+  }
+} |
+
+// MessageIdMultisigISM. The validator set is stored as 65-byte secp256k1 public keys;
+// the metadata carries the origin tree, signed root, signed index and compact signatures.
+// Guard.rho counts each key at most once, so duplicate signatures cannot meet a threshold.
+contract hyperlaneMultisigIsm(@"moduleType", ret) = { ret!(5) } |
+
+contract hyperlaneMultisigIsm(@"validatorsAndThreshold", @message, ret) = {
+  for (@s <- ismState) {
+    ismState!(s) |
+    ret!((s.get("validators"), s.get("threshold")))
+  }
+} |
+
+contract hyperlaneMultisigIsm(@"verify", @metadata, @message, ret) = {
+  hyperlaneMultisigIsm!("verify", metadata, message, "", *ret)
+} |
+
+contract hyperlaneMultisigIsm(@"verify", @metadata, @message, @processor, ret) = {
+  if (metadata.length() < 68) {
+    ret!(false)
+  } else if ((metadata.length() - 68) % 65 != 0) {
+    ret!(false)
+  } else {
+    for (@s <- ismState) {
+      ismState!(s) |
+      new idCh, domainCh, digestCh, sigsCh, derCh, okCh in {
+        hyperlaneMessageId!(message, *idCh) |
+        for (@id <- idCh) {
+          hyperlaneDomainHash!(message.slice(5, 9), metadata.slice(0, 32), *domainCh) |
+          for (@domain <- domainCh) {
+            hyperlaneCheckpointDigest!(
+              domain, metadata.slice(32, 64), metadata.slice(64, 68), id, *digestCh) |
+            for (@digest <- digestCh) {
+              hyperlaneSplitSignatures!(metadata, 0, [], *sigsCh) |
+              for (@sigs <- sigsCh) {
+                hyperlaneSigsToDer!(sigs, 0, [], *derCh) |
+                for (@der <- derCh) {
+                  match der {
+                    (true, derSigs) => {
+                      guardCount!(digest, derSigs, 0, 0, s.get("validators"), s.get("threshold"), *okCh) |
+                      for (@ok <- okCh) {
+                        ret!(ok)
+                      }
+                    }
+                    _ => { ret!(false) }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |

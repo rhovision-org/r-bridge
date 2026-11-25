@@ -1,0 +1,954 @@
+// Hyperlane v3 Mailbox + merkle hook + ISMs + a test recipient.
+//
+// The public Mailbox surface, the capability-gated dispatch door, the depth-32 merkle
+// checkpoint hook, a switchable test ISM, Hyperlane's TrustedRelayerISM and the
+// MessageIdMultisigISM, and a recipient that records what it was handed. The r-bridge
+// Router/Bridge wiring replaces the test recipient in the next phase without changing the
+// Mailbox.
+//
+// Placeholders rendered by the harness: __LOCAL_DOMAIN__, __SENDER_ID__,
+// __TRUSTED_RELAYER__, __ISM_MODE__, __VALIDATORS__, __THRESHOLD__ and __TREE_ID__.
+
+new
+  rs(`rho:registry:insertArbitrary`),
+  deployerId(`rho:rchain:deployerId`),
+  deployId(`rho:rchain:deployId`),
+  blockData(`rho:block:data`),
+  hash(`rho:crypto:keccak256Hash`),
+  dops(`rho:rchain:deployerId:ops`),
+  byteAt, bytesOf, uint32ToBytes, bytesToUint32, uint48ToBytes, bytesToUint48,
+  hyperlaneMessageV3, hyperlaneMessageId, hyperlaneMessageValid, hyperlaneVersion,
+  hyperlaneNonce, hyperlaneOrigin, hyperlaneSender, hyperlaneDestination,
+  hyperlaneRecipient, hyperlaneBody, hyperlaneSenderAddress, hyperlaneRecipientAddress,
+  hyperlaneNoopHook, hyperlaneListSet, hyperlaneListRepeat, hyperlaneZeroHashes,
+  hyperlaneTreeInsert, hyperlaneTreeRoot, hyperlaneMerkleTreeHook,
+  guardAnySig, guardCount,
+  hyperlaneEthSigned, hyperlaneDomainHash, hyperlaneCheckpointDigest, hyperlaneStripZeros,
+  hyperlaneDerInt, hyperlaneCompactToDer, hyperlaneSigsToDer, hyperlaneSplitSignatures,
+  hyperlaneTestIsm, hyperlaneTrustedRelayerIsm, hyperlaneMultisigIsm,
+  hyperlaneCallerId, hyperlaneMailboxDispatch, hyperlaneDispatchDoor,
+  hyperlaneMailbox, hyperlaneDeliver, hyperlaneIsm, hyperlaneRequiredHook,
+  hyperlaneDefaultHook, hyperlaneRecipientContract, hyperlaneMockRecipient,
+  mailboxState, ismState, hookState, recipientState, moduleState, zeroesCh, branchCh,
+  mailboxUri, doorUri, ismUri, hookUri, recipientUri
+in {
+// Big-endian integer <-> byte-array helpers for Hyperlane message encoding.
+//
+// Rholang has no integer-to-byte constructor, but it has a 256-entry hex literal,
+// `hexToBytes`, `slice`, `nth`, `++`, and the integer shift/bitwise ops. Building the
+// byte table once from a literal and slicing one byte at a time keeps the encoding
+// deterministic and identical to `abi.encodePacked(uint32)`.
+//
+// Preconditions: uint helpers are called with non-negative, in-range values. Every
+// field of a dispatched message is range-checked before it reaches them.
+
+contract byteAt(@value, ret) = {
+  match "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff".hexToBytes().slice(value, value + 1) {
+    byte => { ret!(byte) }
+  }
+} |
+
+contract bytesOf(@values, @i, @acc, ret) = {
+  if (i >= values.length()) {
+    ret!(acc)
+  } else {
+    new bCh in {
+      byteAt!(values.nth(i), *bCh) |
+      for (@b <- bCh) {
+        bytesOf!(values, i + 1, acc ++ b, *ret)
+      }
+    }
+  }
+} |
+
+contract uint32ToBytes(@value, ret) = {
+  bytesOf!([
+    (value / 16777216) % 256,
+    (value / 65536) % 256,
+    (value / 256) % 256,
+    value % 256
+  ], 0, "".hexToBytes(), *ret)
+} |
+
+contract bytesToUint32(@bytes, ret) = {
+  ret!(bytes.nth(0) * 16777216 + bytes.nth(1) * 65536 + bytes.nth(2) * 256 + bytes.nth(3))
+} |
+
+contract uint48ToBytes(@value, ret) = {
+  bytesOf!([
+    (value / 1099511627776) % 256,
+    (value / 4294967296) % 256,
+    (value / 16777216) % 256,
+    (value / 65536) % 256,
+    (value / 256) % 256,
+    value % 256
+  ], 0, "".hexToBytes(), *ret)
+} |
+
+contract bytesToUint48(@bytes, ret) = {
+  ret!(bytes.nth(0) * 1099511627776 + bytes.nth(1) * 4294967296 + bytes.nth(2) * 16777216
+     + bytes.nth(3) * 65536 + bytes.nth(4) * 256 + bytes.nth(5))
+} |
+// Hyperlane v3 message encoding and field accessors.
+//
+// Layout: version(1) || nonce(4) || origin(4) || sender(32) || destination(4) ||
+//         recipient(32) || body(rest)
+// id = keccak256(message). See spec/hyperlane.md for the golden vector shared with
+// crates/rbridge-core/src/hyperlane.rs and the EVM peer.
+
+contract hyperlaneMessageV3(@version, @nonce, @origin, @sender, @destination, @recipient, @body, ret) = {
+  new vCh, nCh, oCh, dCh in {
+    byteAt!(version, *vCh) |
+    uint32ToBytes!(nonce, *nCh) |
+    uint32ToBytes!(origin, *oCh) |
+    uint32ToBytes!(destination, *dCh) |
+    for (@v <- vCh; @n <- nCh; @o <- oCh; @d <- dCh) {
+      ret!(v ++ n ++ o ++ sender ++ d ++ recipient ++ body)
+    }
+  }
+} |
+
+contract hyperlaneMessageId(@message, ret) = {
+  new hash(`rho:crypto:keccak256Hash`) in {
+    hash!(message, *ret)
+  }
+} |
+
+// Version 3 and at least the 77-byte header. The destination check is the Mailbox's.
+contract hyperlaneMessageValid(@message, ret) = {
+  if (message.length() < 77) {
+    ret!(false)
+  } else {
+    ret!(message.nth(0) == 3)
+  }
+} |
+
+contract hyperlaneVersion(@message, ret) = { ret!(message.nth(0)) } |
+
+contract hyperlaneNonce(@message, ret) = {
+  new bCh in {
+    bytesToUint32!(message.slice(1, 5), *bCh) |
+    for (@v <- bCh) { ret!(v) }
+  }
+} |
+
+contract hyperlaneOrigin(@message, ret) = {
+  new bCh in {
+    bytesToUint32!(message.slice(5, 9), *bCh) |
+    for (@v <- bCh) { ret!(v) }
+  }
+} |
+
+contract hyperlaneSender(@message, ret) = { ret!(message.slice(9, 41)) } |
+
+contract hyperlaneDestination(@message, ret) = {
+  new bCh in {
+    bytesToUint32!(message.slice(41, 45), *bCh) |
+    for (@v <- bCh) { ret!(v) }
+  }
+} |
+
+contract hyperlaneRecipient(@message, ret) = { ret!(message.slice(45, 77)) } |
+
+contract hyperlaneBody(@message, ret) = {
+  if (message.length() <= 77) {
+    ret!("".hexToBytes())
+  } else {
+    ret!(message.slice(77, message.length()))
+  }
+} |
+
+// The low 20 bytes of a bytes32 sender/recipient, the EVM address convention.
+contract hyperlaneSenderAddress(@message, ret) = { ret!(message.slice(21, 41)) } |
+contract hyperlaneRecipientAddress(@message, ret) = { ret!(message.slice(57, 77)) } |
+// Hyperlane post-dispatch hooks and the merkle checkpoint tree.
+//
+// The tree is Hyperlane's depth-32, LSB-first tree: count is the 1-based number of
+// inserted leaves; insert stores the carried node at the first level where the count bit
+// is 1; root folds branch[i] on the left for a set bit and the zero hash on the right for
+// a clear bit (see Merkle.sol). The hook is only reachable through the Mailbox's private
+// hook name, so it can trust the message it is handed; it does not call back into the
+// Mailbox while the Mailbox state cell is consumed.
+
+contract hyperlaneNoopHook(@"hookType", ret) = { ret!(0) } |
+
+contract hyperlaneNoopHook(@"quoteDispatch", @metadata, @message, ret) = { ret!(0) } |
+
+contract hyperlaneNoopHook(@"postDispatch", @metadata, @message, ret) = {
+  for (@s <- hookState) {
+    new idCh in {
+      hyperlaneMessageId!(message, *idCh) |
+      for (@id <- idCh) {
+        hookState!(s.set("latest", id.bytesToHex())) |
+        ret!(true)
+      }
+    }
+  }
+} |
+
+contract hyperlaneNoopHook(@"latest", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("latest"))
+  }
+} |
+
+// Immutable list update; lists are Rholang data, so this is a rebuild.
+contract hyperlaneListSet(@list, @index, @value, @i, @acc, ret) = {
+  if (i >= list.length()) {
+    ret!(acc)
+  } else {
+    if (i == index) {
+      hyperlaneListSet!(list, index, value, i + 1, acc ++ [value], *ret)
+    } else {
+      hyperlaneListSet!(list, index, value, i + 1, acc ++ [list.nth(i)], *ret)
+    }
+  }
+} |
+
+contract hyperlaneListRepeat(@value, @count, @i, @acc, ret) = {
+  if (i >= count) {
+    ret!(acc)
+  } else {
+    hyperlaneListRepeat!(value, count, i + 1, acc ++ [value], *ret)
+  }
+} |
+
+// zero[0] = 0x00..00 and zero[i+1] = keccak256(zero[i] || zero[i]); 33 entries cover the
+// empty root of a depth-32 tree.
+contract hyperlaneZeroHashes(@i, @current, @acc, ret) = {
+  if (i >= 33) {
+    ret!(acc)
+  } else {
+    new hCh in {
+      hash!(current ++ current, *hCh) |
+      for (@next <- hCh) {
+        hyperlaneZeroHashes!(i + 1, next, acc ++ [current], *ret)
+      }
+    }
+  }
+} |
+
+// Insert a leaf into the branch. `size` is the new 1-based count; returns
+// (true, newBranch) or (false, "merkle tree full").
+contract hyperlaneTreeInsert(@branch, @node, @size, @i, ret) = {
+  if (i >= 32) {
+    ret!((false, "merkle tree full"))
+  } else if (size % 2 == 1) {
+    new setCh in {
+      hyperlaneListSet!(branch, i, node, 0, [], *setCh) |
+      for (@newBranch <- setCh) {
+        ret!((true, newBranch))
+      }
+    }
+  } else {
+    new hCh in {
+      hash!(branch.nth(i) ++ node, *hCh) |
+      for (@next <- hCh) {
+        hyperlaneTreeInsert!(branch, next, size / 2, i + 1, *ret)
+      }
+    }
+  }
+} |
+
+// Fold the branch and zeros into the root. `bitWeight` is 2^i.
+contract hyperlaneTreeRoot(@branch, @zeroes, @index, @i, @bitWeight, @current, ret) = {
+  if (i >= 32) {
+    ret!(current)
+  } else {
+    if ((index / bitWeight) % 2 == 1) {
+      new hCh in {
+        hash!(branch.nth(i) ++ current, *hCh) |
+        for (@next <- hCh) {
+          hyperlaneTreeRoot!(branch, zeroes, index, i + 1, bitWeight * 2, next, *ret)
+        }
+      }
+    } else {
+      new hCh in {
+        hash!(current ++ zeroes.nth(i), *hCh) |
+        for (@next <- hCh) {
+          hyperlaneTreeRoot!(branch, zeroes, index, i + 1, bitWeight * 2, next, *ret)
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"hookType", ret) = { ret!(3) } |
+contract hyperlaneMerkleTreeHook(@"quoteDispatch", @metadata, @message, ret) = { ret!(0) } |
+
+contract hyperlaneMerkleTreeHook(@"postDispatch", @metadata, @message, ret) = {
+  for (@s <- hookState) {
+    new idCh, insertCh in {
+      hyperlaneMessageId!(message, *idCh) |
+      for (@id <- idCh) {
+        hyperlaneTreeInsert!(s.get("branch"), id, s.get("count") + 1, 0, *insertCh) |
+        for (@inserted <- insertCh) {
+          match inserted {
+            (true, newBranch) => {
+              hookState!(s
+                .set("branch", newBranch)
+                .set("count", s.get("count") + 1)
+                .set("latest", id.bytesToHex())) |
+              ret!(true)
+            }
+            _ => {
+              hookState!(s) |
+              ret!(false)
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"latest", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("latest"))
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"treeId", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("treeId"))
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"count", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("count"))
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"root", ret) = {
+  for (@s <- hookState) {
+    new rootCh in {
+      hyperlaneTreeRoot!(
+        s.get("branch"),
+        s.get("zeroes"),
+        s.get("count"),
+        0,
+        1,
+        "0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(),
+        *rootCh) |
+      for (@root <- rootCh) {
+        hookState!(s) |
+        ret!(root.bytesToHex())
+      }
+    }
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"latestCheckpoint", ret) = {
+  for (@s <- hookState) {
+    new rootCh in {
+      hyperlaneTreeRoot!(
+        s.get("branch"),
+        s.get("zeroes"),
+        s.get("count"),
+        0,
+        1,
+        "0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(),
+        *rootCh) |
+      for (@root <- rootCh) {
+        hookState!(s) |
+        if (s.get("count") == 0) {
+          ret!((root.bytesToHex(), 0))
+        } else {
+          ret!((root.bytesToHex(), s.get("count") - 1))
+        }
+      }
+    }
+  }
+} |
+// Signature and checkpoint helpers for the multisig ISM.
+//
+// Hyperlane validators sign the EIP-191-prefixed checkpoint digest with a 65-byte
+// r || s || v signature. rholo's `rho:crypto:secp256k1Verify` consumes DER over a 32-byte
+// prehash, so this converts each signature to DER and lets Guard.rho count signers. The
+// v byte is not needed for verification; low-S is enforced by the signer.
+
+contract hyperlaneEthSigned(@digest, ret) = {
+  new hCh in {
+    hash!("19457468657265756d205369676e6564204d6573736167653a0a3332".hexToBytes() ++ digest, *hCh) |
+    for (@h <- hCh) { ret!(h) }
+  }
+} |
+
+contract hyperlaneDomainHash(@originBytes, @tree, ret) = {
+  new hCh in {
+    hash!(originBytes ++ tree ++ "HYPERLANE".toUtf8Bytes(), *hCh) |
+    for (@h <- hCh) { ret!(h) }
+  }
+} |
+
+contract hyperlaneCheckpointDigest(@domain, @root, @indexBytes, @messageId, ret) = {
+  new innerCh, signedCh in {
+    hash!(domain ++ root ++ indexBytes ++ messageId, *innerCh) |
+    for (@inner <- innerCh) {
+      hyperlaneEthSigned!(inner, *signedCh) |
+      for (@signed <- signedCh) { ret!(signed) }
+    }
+  }
+} |
+
+// Strip leading zero bytes, keeping at least one.
+contract hyperlaneStripZeros(@bytes, @i, ret) = {
+  if (i >= bytes.length() - 1) {
+    ret!(bytes.slice(i, bytes.length()))
+  } else if (bytes.nth(i) == 0) {
+    hyperlaneStripZeros!(bytes, i + 1, *ret)
+  } else {
+    ret!(bytes.slice(i, bytes.length()))
+  }
+} |
+
+// DER INTEGER: 0x02 || length || body, with a 0x00 pad when the high bit is set.
+contract hyperlaneDerInt(@bytes, ret) = {
+  new strippedCh, lenCh in {
+    hyperlaneStripZeros!(bytes, 0, *strippedCh) |
+    for (@stripped <- strippedCh) {
+      if (stripped.nth(0) >= 128) {
+        byteAt!(stripped.length() + 1, *lenCh) |
+        for (@lenByte <- lenCh) {
+          ret!("02".hexToBytes() ++ lenByte ++ "00".hexToBytes() ++ stripped)
+        }
+      } else {
+        byteAt!(stripped.length(), *lenCh) |
+        for (@lenByte <- lenCh) {
+          ret!("02".hexToBytes() ++ lenByte ++ stripped)
+        }
+      }
+    }
+  }
+} |
+
+// DER SEQUENCE: 0x30 || length || r || s.
+contract hyperlaneCompactToDer(@signature, ret) = {
+  if (signature.length() != 65) {
+    ret!((false, "signature length"))
+  } else {
+    new rCh, sCh, lenCh in {
+      hyperlaneDerInt!(signature.slice(0, 32), *rCh) |
+      hyperlaneDerInt!(signature.slice(32, 64), *sCh) |
+      for (@r <- rCh; @s <- sCh) {
+        byteAt!(r.length() + s.length(), *lenCh) |
+        for (@lenByte <- lenCh) {
+          ret!((true, "30".hexToBytes() ++ lenByte ++ r ++ s))
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneSigsToDer(@sigs, @i, @acc, ret) = {
+  if (i >= sigs.length()) {
+    ret!((true, acc))
+  } else {
+    new dCh in {
+      hyperlaneCompactToDer!(sigs.nth(i), *dCh) |
+      for (@d <- dCh) {
+        match d {
+          (true, der) => { hyperlaneSigsToDer!(sigs, i + 1, acc ++ [der], *ret) }
+          _ => { ret!((false, "signature encoding")) }
+        }
+      }
+    }
+  }
+} |
+
+// Split the metadata tail (starting at byte 68) into 65-byte signatures.
+contract hyperlaneSplitSignatures(@metadata, @i, @acc, ret) = {
+  if (68 + i * 65 + 65 > metadata.length()) {
+    ret!(acc)
+  } else {
+    hyperlaneSplitSignatures!(
+      metadata,
+      i + 1,
+      acc ++ [metadata.slice(68 + i * 65, 68 + (i + 1) * 65)],
+      *ret)
+  }
+} |
+// Hyperlane interchain security modules.
+//
+// v1 has two modules behind the same `verify`/`moduleType` surface:
+// - hyperlaneTestIsm: a switchable verdict for development and refusal tests.
+// - hyperlaneTrustedRelayerIsm: accepts only a message whose Mailbox processor is the
+//   configured relayer. This is Hyperlane's TrustedRelayerISM.
+//
+// The Mailbox passes the processor id it is about to record as a fourth argument. This
+// avoids a call back into the Mailbox while its single state cell is consumed, which
+// would deadlock in Rholang. The three-argument form is kept for the standard interface
+// and refuses unless an empty processor happens to match the configuration.
+//
+// The multisig module (checkpoint signatures over message ids) lives in a later phase.
+
+contract hyperlaneTestIsm(@"moduleType", ret) = { ret!(6) } |
+
+contract hyperlaneTestIsm(@"verify", @metadata, @message, ret) = {
+  hyperlaneTestIsm!("verify", metadata, message, "", *ret)
+} |
+
+contract hyperlaneTestIsm(@"verify", @metadata, @message, @processor, ret) = {
+  for (@s <- ismState) {
+    ismState!(s) |
+    ret!(s.get("accept"))
+  }
+} |
+
+contract hyperlaneTestIsm(@"setAccept", @value, ret) = {
+  for (@s <- ismState) {
+    ismState!(s.set("accept", value)) |
+    ret!(true)
+  }
+} |
+
+// Devnet configuration arm: the trusted module reads the same shared ismState. Production
+// fixes the relayer at install and omits this arm.
+contract hyperlaneTestIsm(@"setTrustedRelayer", @value, ret) = {
+  for (@s <- ismState) {
+    ismState!(s.set("trustedRelayer", value)) |
+    ret!(true)
+  }
+} |
+
+// Hyperlane's TrustedRelayerIsm: the message is accepted when the Mailbox records the
+// configured relayer as its processor. `processor` is a lowercase hex bytes32 id.
+contract hyperlaneTrustedRelayerIsm(@"moduleType", ret) = { ret!(6) } |
+
+contract hyperlaneTrustedRelayerIsm(@"verify", @metadata, @message, ret) = {
+  hyperlaneTrustedRelayerIsm!("verify", metadata, message, "", *ret)
+} |
+
+contract hyperlaneTrustedRelayerIsm(@"verify", @metadata, @message, @processor, ret) = {
+  for (@s <- ismState) {
+    ismState!(s) |
+    ret!(processor == s.get("trustedRelayer"))
+  }
+} |
+
+// MessageIdMultisigISM. The validator set is stored as 65-byte secp256k1 public keys;
+// the metadata carries the origin tree, signed root, signed index and compact signatures.
+// Guard.rho counts each key at most once, so duplicate signatures cannot meet a threshold.
+contract hyperlaneMultisigIsm(@"moduleType", ret) = { ret!(5) } |
+
+contract hyperlaneMultisigIsm(@"validatorsAndThreshold", @message, ret) = {
+  for (@s <- ismState) {
+    ismState!(s) |
+    ret!((s.get("validators"), s.get("threshold")))
+  }
+} |
+
+contract hyperlaneMultisigIsm(@"verify", @metadata, @message, ret) = {
+  hyperlaneMultisigIsm!("verify", metadata, message, "", *ret)
+} |
+
+contract hyperlaneMultisigIsm(@"verify", @metadata, @message, @processor, ret) = {
+  if (metadata.length() < 68) {
+    ret!(false)
+  } else if ((metadata.length() - 68) % 65 != 0) {
+    ret!(false)
+  } else {
+    for (@s <- ismState) {
+      ismState!(s) |
+      new idCh, domainCh, digestCh, sigsCh, derCh, okCh in {
+        hyperlaneMessageId!(message, *idCh) |
+        for (@id <- idCh) {
+          hyperlaneDomainHash!(message.slice(5, 9), metadata.slice(0, 32), *domainCh) |
+          for (@domain <- domainCh) {
+            hyperlaneCheckpointDigest!(
+              domain, metadata.slice(32, 64), metadata.slice(64, 68), id, *digestCh) |
+            for (@digest <- digestCh) {
+              hyperlaneSplitSignatures!(metadata, 0, [], *sigsCh) |
+              for (@sigs <- sigsCh) {
+                hyperlaneSigsToDer!(sigs, 0, [], *derCh) |
+                for (@der <- derCh) {
+                  match der {
+                    (true, derSigs) => {
+                      guardCount!(digest, derSigs, 0, 0, s.get("validators"), s.get("threshold"), *okCh) |
+                      for (@ok <- okCh) {
+                        ret!(ok)
+                      }
+                    }
+                    _ => { ret!(false) }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+// Hyperlane Mailbox for rholo.
+//
+// The public surface follows the Hyperlane alt-VM guide: localDomain, nonce, delivered,
+// processor, processedAt, dispatched, latestDispatchedId, quoteDispatch and process.
+// Dispatch is deliberately capability-gated: the public bundle does not expose it. The
+// Router (or the harness) holds `hyperlaneDispatchDoor`, which fixes the sender id to
+// the configured r-bridge peer id and calls the internal dispatcher.
+//
+// State is one cell (mailboxState); every arm consumes, validates and reposts exactly
+// once. `process` records delivery only after the recipient's handle returns true, so a
+// refused delivery leaves no trace.
+
+contract hyperlaneCallerId(dId, ret) = {
+  new dops(`rho:rchain:deployerId:ops`), pkCh, hCh, hash(`rho:crypto:keccak256Hash`) in {
+    dops!("pubKeyBytes", *dId, *pkCh) |
+    for (@pk <- pkCh) {
+      hash!(pk, *hCh) |
+      for (@h <- hCh) { ret!(h) }
+    }
+  }
+} |
+
+// The internal dispatcher. Not registered; only the door and the Router hold it.
+contract hyperlaneMailboxDispatch(@sender, @destination, @recipient, @body, @metadata, ret) = {
+  for (@s <- mailboxState) {
+    new msgCh, idCh, reqCh, defCh in {
+      hyperlaneMessageV3!(3, s.get("nonce"), s.get("localDomain"), sender, destination, recipient, body, *msgCh) |
+      for (@message <- msgCh) {
+        hyperlaneMessageId!(message, *idCh) |
+        for (@id <- idCh) {
+          hyperlaneRequiredHook!("postDispatch", metadata, message, *reqCh) |
+          for (@requiredOk <- reqCh) {
+            if (requiredOk == false) {
+              mailboxState!(s) | ret!((false, "hook"))
+            } else {
+              hyperlaneDefaultHook!("postDispatch", metadata, message, *defCh) |
+              for (@defaultOk <- defCh) {
+                if (defaultOk == false) {
+                  mailboxState!(s) | ret!((false, "hook"))
+                } else {
+                  mailboxState!(s
+                    .set("nonce", s.get("nonce") + 1)
+                    .set("latestDispatchedId", id.bytesToHex())
+                    .set("dispatched", s.get("dispatched").set(id.bytesToHex(), message.bytesToHex()))) |
+                  ret!((true, id.bytesToHex()))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+// Capability-gated dispatch. The sender id is the r-bridge peer identity, not the caller.
+contract hyperlaneDispatchDoor(@"dispatch", @destination, @recipient, @body, @metadata, ret) = {
+  hyperlaneMailboxDispatch!(__SENDER_ID__, destination, recipient, body, metadata, *ret)
+} |
+
+contract hyperlaneMailbox(@"localDomain", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("localDomain"))
+  }
+} |
+
+contract hyperlaneMailbox(@"nonce", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("nonce"))
+  }
+} |
+
+contract hyperlaneMailbox(@"latestDispatchedId", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("latestDispatchedId"))
+  }
+} |
+
+contract hyperlaneMailbox(@"defaultIsm", ret) = { ret!("hyperlaneIsm") } |
+contract hyperlaneMailbox(@"defaultHook", ret) = { ret!("hyperlaneDefaultHook") } |
+contract hyperlaneMailbox(@"requiredHook", ret) = { ret!("hyperlaneRequiredHook") } |
+
+contract hyperlaneMailbox(@"delivered", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("deliveries").get(idHex) {
+      Nil => { ret!(false) }
+      _ => { ret!(true) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"processor", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("deliveries").get(idHex) {
+      Nil => { ret!("") }
+      d => { ret!(d.get("processor")) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"processedAt", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("deliveries").get(idHex) {
+      Nil => { ret!(0) }
+      d => { ret!(d.get("block")) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"dispatched", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("dispatched").get(idHex) {
+      Nil => { ret!((false, "unknown message")) }
+      m => { ret!((true, m)) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"quoteDispatch", @destination, @recipient, @body, @metadata, ret) = {
+  ret!(0)
+} |
+
+// Record delivery and call the recipient. The Mailbox state is held by `process`; this
+// helper reposts it exactly once on every path.
+contract hyperlaneDeliver(@s, @id, @message, @proc, ret) = {
+  new originCh, senderCh, bodyCh, bdCh in {
+    hyperlaneOrigin!(message, *originCh) |
+    hyperlaneSender!(message, *senderCh) |
+    hyperlaneBody!(message, *bodyCh) |
+    for (@origin <- originCh; @sender <- senderCh; @body <- bodyCh) {
+      blockData!(*bdCh) |
+      for (@blockNumber, @blockSender, @blockTimestamp <- bdCh) {
+        new handleCh in {
+          hyperlaneRecipientContract!("handle", origin, sender, body, *handleCh) |
+          for (@handled <- handleCh) {
+            if (handled == false) {
+              mailboxState!(s) | ret!((false, "recipient"))
+            } else {
+              mailboxState!(s.set("deliveries", s.get("deliveries").set(id.bytesToHex(), {
+                "processor": proc.bytesToHex(),
+                "block": blockNumber
+              }))) |
+              ret!((true, id.bytesToHex()))
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"process", @metadata, @message, ret) = {
+  for (@s <- mailboxState) {
+    new validCh, destCh, idCh, ismCh, procCh in {
+      hyperlaneMessageValid!(message, *validCh) |
+      for (@valid <- validCh) {
+        if (valid == false) {
+          mailboxState!(s) | ret!((false, "version"))
+        } else {
+          hyperlaneDestination!(message, *destCh) |
+          for (@dest <- destCh) {
+            if (dest != s.get("localDomain")) {
+              mailboxState!(s) | ret!((false, "destination"))
+            } else {
+              hyperlaneMessageId!(message, *idCh) |
+              for (@id <- idCh) {
+                match s.get("deliveries").get(id.bytesToHex()) {
+                  Nil => {
+                    hyperlaneCallerId!(*deployerId, *procCh) |
+                    for (@proc <- procCh) {
+                      hyperlaneIsm!("verify", metadata, message, proc.bytesToHex(), *ismCh) |
+                      for (@ok <- ismCh) {
+                        if (ok == false) {
+                          mailboxState!(s) | ret!((false, "ism"))
+                        } else {
+                          hyperlaneDeliver!(s, id, message, proc, *ret)
+                        }
+                      }
+                    }
+                  }
+                  _ => { mailboxState!(s) | ret!((false, "already delivered")) }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+// M-of-N secp256k1 verification over a 32-byte digest.
+//
+// The digest is computed by the caller (Bridge) from the canonical r-bridge message.
+// Signatures are DER low-S; keys are 65-byte uncompressed secp256k1 public keys.
+// guardAnySig searches the supplied signatures for one that verifies under a key;
+// guardCount walks the key set and counts keys with at least one valid signature.
+// This lets a relayer omit its signature without leaving a hole in the list.
+
+contract guardAnySig(@digest, @sigs, @j, @key, ret) = {
+  if (j >= sigs.length()) {
+    ret!(false)
+  } else {
+    new verify(`rho:crypto:secp256k1Verify`), vCh in {
+      match sigs.nth(j) {
+        sig => {
+          verify!(digest, sig, key, *vCh) |
+          for (@ok <- vCh) {
+            if (ok) { ret!(true) }
+            else { guardAnySig!(digest, sigs, j + 1, key, *ret) }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract guardCount(@digest, @sigs, @i, @count, @keys, @threshold, ret) = {
+  if (i >= keys.length()) {
+    ret!(count >= threshold)
+  } else {
+    match keys.nth(i) {
+      key => {
+        new anyCh in {
+          guardAnySig!(digest, sigs, 0, key, *anyCh) |
+          for (@any <- anyCh) {
+            if (any) { guardCount!(digest, sigs, i + 1, count + 1, keys, threshold, *ret) }
+            else { guardCount!(digest, sigs, i + 1, count, keys, threshold, *ret) }
+          }
+        }
+      }
+    }
+  }
+} |
+
+  // The configured module. The mode is deployment state so the harness can prove the
+  // test, TrustedRelayerISM and MessageIdMultisigISM paths on one Mailbox.
+  contract hyperlaneIsm(@"verify", @metadata, @message, @processor, ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      if (s.get("mode") == "trusted") {
+        hyperlaneTrustedRelayerIsm!("verify", metadata, message, processor, *ret)
+      } else if (s.get("mode") == "multisig") {
+        hyperlaneMultisigIsm!("verify", metadata, message, processor, *ret)
+      } else {
+        hyperlaneTestIsm!("verify", metadata, message, processor, *ret)
+      }
+    }
+  } |
+
+  contract hyperlaneIsm(@"verify", @metadata, @message, ret) = {
+    hyperlaneIsm!("verify", metadata, message, "", *ret)
+  } |
+
+  contract hyperlaneIsm(@"moduleType", ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      if (s.get("mode") == "multisig") {
+        ret!(5)
+      } else {
+        ret!(6)
+      }
+    }
+  } |
+
+  contract hyperlaneIsm(@"setMode", @mode, ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s.set("mode", mode)) |
+      ret!(true)
+    }
+  } |
+
+  contract hyperlaneIsm(@"mode", ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      ret!(s.get("mode"))
+    }
+  } |
+
+  // Devnet-only configuration forwarded to the shared ISM state.
+  contract hyperlaneIsm(@"setAccept", @value, ret) = {
+    hyperlaneTestIsm!("setAccept", value, *ret)
+  } |
+
+  contract hyperlaneIsm(@"setTrustedRelayer", @value, ret) = {
+    hyperlaneTestIsm!("setTrustedRelayer", value, *ret)
+  } |
+
+  // A required hook that charges nothing; the merkle hook is the default and runs once.
+  contract hyperlaneRequiredHook(@"postDispatch", @metadata, @message, ret) = { ret!(true) } |
+
+  contract hyperlaneDefaultHook(@"postDispatch", @metadata, @message, ret) = {
+    hyperlaneMerkleTreeHook!("postDispatch", metadata, message, *ret)
+  } |
+
+  contract hyperlaneRecipientContract(@"handle", @origin, @sender, @body, ret) = {
+    hyperlaneMockRecipient!("handle", origin, sender, body, *ret)
+  } |
+
+  contract hyperlaneMockRecipient(@"handle", @origin, @sender, @body, ret) = {
+    for (@s <- recipientState) {
+      recipientState!(s
+        .set("count", s.get("count") + 1)
+        .set("lastOrigin", origin)
+        .set("lastSender", sender.bytesToHex())
+        .set("lastBody", body.bytesToHex())) |
+      ret!(true)
+    }
+  } |
+
+  contract hyperlaneMockRecipient(@"state", ret) = {
+    for (@s <- recipientState) {
+      recipientState!(s) |
+      ret!(s)
+    }
+  } |
+
+  hyperlaneZeroHashes!(0, "0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(), [], *zeroesCh) |
+  for (@zeroes <- zeroesCh) {
+    hyperlaneListRepeat!("0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(), 32, 0, [], *branchCh) |
+    for (@branch <- branchCh) {
+      mailboxState!({
+        "localDomain": __LOCAL_DOMAIN__,
+        "nonce": 0,
+        "latestDispatchedId": "",
+        "deliveries": {},
+        "dispatched": {}
+      }) |
+      ismState!({
+        "accept": true,
+        "trustedRelayer": __TRUSTED_RELAYER__,
+        "validators": __VALIDATORS__,
+        "threshold": __THRESHOLD__
+      }) |
+      moduleState!({
+        "mode": __ISM_MODE__
+      }) |
+      hookState!({
+        "branch": branch,
+        "zeroes": zeroes,
+        "count": 0,
+        "latest": "",
+        "treeId": __TREE_ID__
+      }) |
+      recipientState!({
+        "count": 0,
+        "lastOrigin": 0,
+        "lastSender": "",
+        "lastBody": ""
+      }) |
+      rs!(bundle+{*hyperlaneMailbox}, *mailboxUri) |
+      rs!(bundle+{*hyperlaneDispatchDoor}, *doorUri) |
+      rs!(bundle+{*hyperlaneIsm}, *ismUri) |
+      rs!(bundle+{*hyperlaneMerkleTreeHook}, *hookUri) |
+      rs!(bundle+{*hyperlaneMockRecipient}, *recipientUri) |
+      for (@m <- mailboxUri; @d <- doorUri; @i <- ismUri; @h <- hookUri; @r <- recipientUri) {
+        deployId!([m, d, i, h, r])
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 # Current limitations
 
 This chapter is the single consolidated list of what r-bridge does **not** do yet. It is
-current as of 2026-11-10 and mirrors the evidence in [Testing and verification](testing.md)
+current as of 2026-11-25 and mirrors the evidence in [Testing and verification](testing.md)
 and the plan in [Roadmap](roadmap.md). If a limitation is removed, update this chapter and
 the README together.
 
@@ -41,6 +41,21 @@ the README together.
   be swept (rholo) or withdrawn (vault). There is no per-epoch distribution to relayers.
 - **No bond or slashing.** The relayer set is permissioned and trusted socially, not
   economically. A colluding majority can attest false flows.
+
+## Hyperlane on-chain
+
+- **No rholo agent.** The Mailbox, depth-32 merkle hook, test/TrustedRelayer/
+  MessageIdMultisig ISMs, Router and wired Bridge pass 59 + 31 devnet checks; the EVM peer
+  passes 11 Foundry tests. rholo is not on the live Hyperlane network; the rholo-side agent
+  is the longer-term work.
+- **Static routes and validators.** `byDomain`/`routes` and the validator set are fixed at
+  install; there is no runtime enrolment or rotation. The ISM mode switch is a devnet arm.
+- **Term size.** The wired term is about 56 KiB unrendered and about 60 KiB rendered: under
+  the node cap but over the 56 KiB planning budget; splitting the suite and the Bridge is
+  the next size step.
+- **One asset, ERC-20 only** on the EVM peer; native-ETH and multi-asset peers are future.
+- **No economic security.** The trusted module trusts one relayer; the multisig module is
+  signature-thresholded but has no bond or slashing.
 
 ## Relayer and trust
 
@@ -109,7 +124,8 @@ the README together.
 ## Platform limits
 
 - **Deploy cap.** rholo rejects deploys over 64 KiB; the project budgets 56 KiB. The
-  current term is about 15.5 KiB, leaving room but not unlimited growth.
+  bridge term is about 16 KiB; the wired Hyperlane term is about 56 KiB unrendered and
+  about 60 KiB rendered, so it is the first term near the cap.
 - **Amount precision.** rholo amounts are `i64`; 18-decimal assets are scaled to 8
   decimals and non-multiple dust is refused, never rounded.
 - **No proxy contracts.** The vault is immutable and has no external dependencies;

@@ -4,12 +4,22 @@ Devnet only. Nothing here is a production relayer, and the keys are worth nothin
 
 ## Contents
 
-- `render.py` — fills the deploy template (`contracts/rholo/build/00_bridge.rho`) with
-  the network, bridge id, admin/relayer sets and the asset registry.
+- `render.py` — fills the deploy templates: `00_bridge.rho` with the network, bridge id,
+  admin/relayer sets and asset registry, and `10_hyperlane.rho` with the domain, sender
+  id, trusted relayer and ISM mode.
 - `demo.py` — the Phase 1 end-to-end demo. Installs the bridge, signs a deposit with
   2-of-3 dev relayer keys, mints, tests replay/below-threshold/unknown-asset, burns,
   completes the withdrawal, transfers, pauses/unpauses via 2-of-3 admin signatures, and
   checks conservation. Prints PASS/FAIL for each check.
+- `hyperlane_demo.py` — installs the Rholang Hyperlane v3 suite (Mailbox, depth-32 merkle
+  hook, test/TrustedRelayer/MessageIdMultisig ISMs, test recipient) and runs 59 checks:
+  dispatch/process, message id and merkle checkpoint vs the Rust oracle, delivery,
+  replay/destination/version/ISM refusals, the 2-of-3 multisig path. Writes
+  `.devnet/hyperlane.json`.
+- `hyperlane_bridge_demo.py` — installs the wired Bridge + Hyperlane term and runs 31
+  checks: inbound deposit through the Router mints on the Bridge, burn dispatches the
+  outbound payload, wrong sender/asset/replay/pause refusals, a multisig deposit, and
+  conservation. Writes `.devnet/hyperlane_bridge.json`.
 - `mock_relayer.py` — the dev-only HTTP surface from `spec/relayer-interface.md`:
   `/health`, `/v1/chains`, `POST /v1/deposits`, `/v1/deposits/{id}` and
   `/v1/deposits/{id}/attestation`. It watches no chain; it attests what it is told.
@@ -52,6 +62,8 @@ Devnet only. Nothing here is a production relayer, and the keys are worth nothin
 make devnet-up      # local rholo devnet on :40403 (RHOLO_DIR, 8 GB node memory)
 make demo           # build the CLI, install the bridge, run the checks
 make mock-relayer   # HTTP relayer surface on 127.0.0.1:8099
+make hyperlane-demo # Rholang Hyperlane v3 suite; 59 checks
+make hyperlane-bridge-demo # wired Bridge + Hyperlane; 31 checks
 make e2e-evm        # cross-chain demo; requires Anvil on :8545
 make deploy-demo    # vault deployment path on its own Anvil (:8547)
 make relayer-watch  # dev watcher loop; start it before locking

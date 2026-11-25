@@ -1,0 +1,197 @@
+// Hyperlane Mailbox for rholo.
+//
+// The public surface follows the Hyperlane alt-VM guide: localDomain, nonce, delivered,
+// processor, processedAt, dispatched, latestDispatchedId, quoteDispatch and process.
+// Dispatch is deliberately capability-gated: the public bundle does not expose it. The
+// Router (or the harness) holds `hyperlaneDispatchDoor`, which fixes the sender id to
+// the configured r-bridge peer id and calls the internal dispatcher.
+//
+// State is one cell (mailboxState); every arm consumes, validates and reposts exactly
+// once. `process` records delivery only after the recipient's handle returns true, so a
+// refused delivery leaves no trace.
+
+contract hyperlaneCallerId(dId, ret) = {
+  new dops(`rho:rchain:deployerId:ops`), pkCh, hCh, hash(`rho:crypto:keccak256Hash`) in {
+    dops!("pubKeyBytes", *dId, *pkCh) |
+    for (@pk <- pkCh) {
+      hash!(pk, *hCh) |
+      for (@h <- hCh) { ret!(h) }
+    }
+  }
+} |
+
+// The internal dispatcher. Not registered; only the door and the Router hold it.
+contract hyperlaneMailboxDispatch(@sender, @destination, @recipient, @body, @metadata, ret) = {
+  for (@s <- mailboxState) {
+    new msgCh, idCh, reqCh, defCh in {
+      hyperlaneMessageV3!(3, s.get("nonce"), s.get("localDomain"), sender, destination, recipient, body, *msgCh) |
+      for (@message <- msgCh) {
+        hyperlaneMessageId!(message, *idCh) |
+        for (@id <- idCh) {
+          hyperlaneRequiredHook!("postDispatch", metadata, message, *reqCh) |
+          for (@requiredOk <- reqCh) {
+            if (requiredOk == false) {
+              mailboxState!(s) | ret!((false, "hook"))
+            } else {
+              hyperlaneDefaultHook!("postDispatch", metadata, message, *defCh) |
+              for (@defaultOk <- defCh) {
+                if (defaultOk == false) {
+                  mailboxState!(s) | ret!((false, "hook"))
+                } else {
+                  mailboxState!(s
+                    .set("nonce", s.get("nonce") + 1)
+                    .set("latestDispatchedId", id.bytesToHex())
+                    .set("dispatched", s.get("dispatched").set(id.bytesToHex(), message.bytesToHex()))) |
+                  ret!((true, id.bytesToHex()))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+// Capability-gated dispatch. The sender id is the r-bridge peer identity, not the caller.
+contract hyperlaneDispatchDoor(@"dispatch", @destination, @recipient, @body, @metadata, ret) = {
+  hyperlaneMailboxDispatch!(__SENDER_ID__, destination, recipient, body, metadata, *ret)
+} |
+
+contract hyperlaneMailbox(@"localDomain", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("localDomain"))
+  }
+} |
+
+contract hyperlaneMailbox(@"nonce", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("nonce"))
+  }
+} |
+
+contract hyperlaneMailbox(@"latestDispatchedId", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("latestDispatchedId"))
+  }
+} |
+
+contract hyperlaneMailbox(@"defaultIsm", ret) = { ret!("hyperlaneIsm") } |
+contract hyperlaneMailbox(@"defaultHook", ret) = { ret!("hyperlaneDefaultHook") } |
+contract hyperlaneMailbox(@"requiredHook", ret) = { ret!("hyperlaneRequiredHook") } |
+
+contract hyperlaneMailbox(@"delivered", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("deliveries").get(idHex) {
+      Nil => { ret!(false) }
+      _ => { ret!(true) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"processor", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("deliveries").get(idHex) {
+      Nil => { ret!("") }
+      d => { ret!(d.get("processor")) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"processedAt", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("deliveries").get(idHex) {
+      Nil => { ret!(0) }
+      d => { ret!(d.get("block")) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"dispatched", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("dispatched").get(idHex) {
+      Nil => { ret!((false, "unknown message")) }
+      m => { ret!((true, m)) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"quoteDispatch", @destination, @recipient, @body, @metadata, ret) = {
+  ret!(0)
+} |
+
+// Record delivery and call the recipient. The Mailbox state is held by `process`; this
+// helper reposts it exactly once on every path.
+contract hyperlaneDeliver(@s, @id, @message, @proc, ret) = {
+  new originCh, senderCh, bodyCh, bdCh in {
+    hyperlaneOrigin!(message, *originCh) |
+    hyperlaneSender!(message, *senderCh) |
+    hyperlaneBody!(message, *bodyCh) |
+    for (@origin <- originCh; @sender <- senderCh; @body <- bodyCh) {
+      blockData!(*bdCh) |
+      for (@blockNumber, @blockSender, @blockTimestamp <- bdCh) {
+        new handleCh in {
+          hyperlaneRecipientContract!("handle", origin, sender, body, *handleCh) |
+          for (@handled <- handleCh) {
+            if (handled == false) {
+              mailboxState!(s) | ret!((false, "recipient"))
+            } else {
+              mailboxState!(s.set("deliveries", s.get("deliveries").set(id.bytesToHex(), {
+                "processor": proc.bytesToHex(),
+                "block": blockNumber
+              }))) |
+              ret!((true, id.bytesToHex()))
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"process", @metadata, @message, ret) = {
+  for (@s <- mailboxState) {
+    new validCh, destCh, idCh, ismCh, procCh in {
+      hyperlaneMessageValid!(message, *validCh) |
+      for (@valid <- validCh) {
+        if (valid == false) {
+          mailboxState!(s) | ret!((false, "version"))
+        } else {
+          hyperlaneDestination!(message, *destCh) |
+          for (@dest <- destCh) {
+            if (dest != s.get("localDomain")) {
+              mailboxState!(s) | ret!((false, "destination"))
+            } else {
+              hyperlaneMessageId!(message, *idCh) |
+              for (@id <- idCh) {
+                match s.get("deliveries").get(id.bytesToHex()) {
+                  Nil => {
+                    hyperlaneCallerId!(*deployerId, *procCh) |
+                    for (@proc <- procCh) {
+                      hyperlaneIsm!("verify", metadata, message, proc.bytesToHex(), *ismCh) |
+                      for (@ok <- ismCh) {
+                        if (ok == false) {
+                          mailboxState!(s) | ret!((false, "ism"))
+                        } else {
+                          hyperlaneDeliver!(s, id, message, proc, *ret)
+                        }
+                      }
+                    }
+                  }
+                  _ => { mailboxState!(s) | ret!((false, "already delivered")) }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |

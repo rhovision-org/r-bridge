@@ -4,6 +4,10 @@
 // holds no ERTP purse, because ERTP has no burn arm. The mint authority is the m-of-n
 // relayer attestation over the canonical digest in spec/attestation.md.
 //
+// The contract arms live in lib/Bridge.rho so the Hyperlane-wired term can share them.
+// In this term the Hyperlane path is disabled: `hyperlaneRouter` is a refusing stub and
+// the state flag is false.
+//
 // Placeholders (rendered by harness/render.py): network, admin set and threshold,
 // relayer set and threshold, and the asset registry map.
 new
@@ -14,7 +18,8 @@ new
   hash(`rho:crypto:keccak256Hash`),
   uriCh,
   guardAnySig, guardCount,
-  callerAddress, callerPubKey, listContains, balanceOf, setBalance, addAmount, feeOf
+  callerAddress, callerPubKey, listContains, balanceOf, setBalance, addAmount, feeOf,
+  bridgeMintCore, bridgeHyperlaneMint, bridgeFinishBurn, hyperlaneRouter
 in {
 // M-of-N secp256k1 verification over a 32-byte digest.
 //
@@ -120,6 +125,13 @@ contract addAmount(@map, @key, @amount, ret) = {
 contract feeOf(@amount, @bps, ret) = {
   ret!(amount / 10000 * bps + (amount % 10000) * bps / 10000)
 } |
+// The r-bridge wrapped-asset contract arms, shared by the attested deploy term and the
+// Hyperlane-wired term. State is `bridgeState`; identity helpers come from Ledger.rho and
+// threshold verification from Guard.rho.
+//
+// Additions over the Phase 1 demo: `bridgeMintCore` is the shared mint body,
+// `bridgeHyperlaneMint` is the capability-gated path the Hyperlane Router holds, and
+// `bridgeFinishBurn` records a withdrawal and optionally dispatches it through the Router.
 
   contract Bridge(@"balanceOf", @assetKey, @owner, ret) = {
     for (@s <<- bridgeState) {
@@ -235,35 +247,30 @@ contract feeOf(@amount, @bps, ret) = {
           } else {
             match s.get("processedDeposits").get(externalTxId) {
               Nil => {
-                new fCh in {
-                  feeOf!(amount, asset.get("feeBpsDeposit"), *fCh) |
-                  for (@fee <- fCh) {
-                    match "rbridge:v1|" ++ s.get("network") ++ "|" ++ chain ++ "|" ++ s.get("bridgeId") ++ "|" ++ chain ++ "." ++ assetId ++ "|deposit|" ++ externalTxId ++ "|" ++ amount.toString() ++ "|" ++ recipient ++ "|" ++ nonce.toString() {
-                      payload => {
-                        new hCh, okCh in {
-                        hash!(payload.toUtf8Bytes(), *hCh) |
-                        for (@digest <- hCh) {
-                          guardCount!(digest, sigs, 0, 0, s.get("relayers"), s.get("relayerThreshold"), *okCh) |
-                          for (@ok <- okCh) {
-                            if (ok == false) {
-                              bridgeState!(s) | ret!((false, "below threshold"))
-                            } else {
-                              new bCh, sbCh, fbCh in {
-                                balanceOf!(s, chain ++ "." ++ assetId, recipient, *bCh) |
-                                for (@bal <- bCh) {
-                                  setBalance!(s.get("balances"), chain ++ "." ++ assetId, recipient, bal + amount - fee, *sbCh) |
-                                  for (@b2 <- sbCh) {
-                                    addAmount!(s.get("fees"), chain ++ "." ++ assetId, fee, *fbCh) |
-                                    for (@f2 <- fbCh) {
-                                      bridgeState!(s.set("balances", b2).set("fees", f2).set("processedDeposits", s.get("processedDeposits").set(externalTxId, true))) |
-                                      ret!((true, amount - fee))
-                                    }
+                match "rbridge:v1|" ++ s.get("network") ++ "|" ++ chain ++ "|" ++ s.get("bridgeId") ++ "|" ++ chain ++ "." ++ assetId ++ "|deposit|" ++ externalTxId ++ "|" ++ amount.toString() ++ "|" ++ recipient ++ "|" ++ nonce.toString() {
+                  payload => {
+                    new hCh, okCh in {
+                      hash!(payload.toUtf8Bytes(), *hCh) |
+                      for (@digest <- hCh) {
+                        guardCount!(digest, sigs, 0, 0, s.get("relayers"), s.get("relayerThreshold"), *okCh) |
+                        for (@ok <- okCh) {
+                          if (ok == false) {
+                            bridgeState!(s) | ret!((false, "below threshold"))
+                          } else {
+                            new cCh in {
+                              bridgeMintCore!(s, chain ++ "." ++ assetId, externalTxId, amount, recipient, *cCh) |
+                              for (@r <- cCh) {
+                                match r {
+                                  (true, newState, credited) => {
+                                    bridgeState!(newState) | ret!((true, credited))
+                                  }
+                                  (false, reason) => {
+                                    bridgeState!(s) | ret!((false, reason))
                                   }
                                 }
                               }
                             }
                           }
-                        }
                         }
                       }
                     }
@@ -271,6 +278,67 @@ contract feeOf(@amount, @bps, ret) = {
                 }
               }
               _ => { bridgeState!(s) | ret!((false, "replay")) }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // Shared mint body. Pure over `s`: returns (true, newState, credited) or
+  // (false, reason). Callers repost exactly one state.
+  contract bridgeMintCore(@s, @assetKey, @externalTxId, @amount, @recipient, ret) = {
+    match (s.get("paused"), s.get("assets").get(assetKey)) {
+      (true, _) => { ret!((false, "paused")) }
+      (_, Nil) => { ret!((false, "unknown asset")) }
+      (_, asset) => {
+        if (asset.get("enabled") != true) {
+          ret!((false, "asset disabled"))
+        } else if (recipient.length() == 0) {
+          ret!((false, "recipient"))
+        } else if (amount < asset.get("minDeposit") || amount > asset.get("maxDeposit")) {
+          ret!((false, "amount out of bounds"))
+        } else {
+          match s.get("processedDeposits").get(externalTxId) {
+            Nil => {
+              new fCh in {
+                feeOf!(amount, asset.get("feeBpsDeposit"), *fCh) |
+                for (@fee <- fCh) {
+                  new bCh, sbCh, fbCh in {
+                    balanceOf!(s, assetKey, recipient, *bCh) |
+                    for (@bal <- bCh) {
+                      setBalance!(s.get("balances"), assetKey, recipient, bal + amount - fee, *sbCh) |
+                      for (@b2 <- sbCh) {
+                        addAmount!(s.get("fees"), assetKey, fee, *fbCh) |
+                        for (@f2 <- fbCh) {
+                          ret!((true, s.set("balances", b2).set("fees", f2).set("processedDeposits", s.get("processedDeposits").set(externalTxId, true)), amount - fee))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            _ => { ret!((false, "replay")) }
+          }
+        }
+      }
+    }
+  } |
+
+  // The Hyperlane Router holds this name; it is not registered publicly and does not
+  // require relayer signatures because the Mailbox's ISM already authorised the message.
+  contract bridgeHyperlaneMint(@assetKey, @externalTxId, @amount, @recipient, @nonce, ret) = {
+    for (@s <- bridgeState) {
+      new cCh in {
+        bridgeMintCore!(s, assetKey, externalTxId, amount, recipient, *cCh) |
+        for (@r <- cCh) {
+          match r {
+            (true, newState, credited) => {
+              bridgeState!(newState) | ret!((true, credited))
+            }
+            (false, reason) => {
+              bridgeState!(s) | ret!((false, reason))
             }
           }
         }
@@ -305,17 +373,21 @@ contract feeOf(@amount, @bps, ret) = {
                                   new sbCh in {
                                     setBalance!(s.get("balances"), chain ++ "." ++ assetId, owner, bal - amount, *sbCh) |
                                     for (@b2 <- sbCh) {
-                                      bridgeState!(s.set("balances", b2).set("withdrawals", s.get("withdrawals").set(withdrawalId, {
-                                        "owner": owner,
-                                        "chain": chain,
-                                        "assetId": assetId,
-                                        "amount": amount,
-                                        "fee": fee,
-                                        "destChain": destChain,
-                                        "destAddress": destAddress,
-                                        "status": "pending"
-                                      }))) |
-                                      ret!((true, withdrawalId))
+                                      new recCh in {
+                                        recCh!({
+                                          "owner": owner,
+                                          "chain": chain,
+                                          "assetId": assetId,
+                                          "amount": amount,
+                                          "fee": fee,
+                                          "destChain": destChain,
+                                          "destAddress": destAddress,
+                                          "status": "pending"
+                                        }) |
+                                        for (@record <- recCh) {
+                                          bridgeFinishBurn!(s, b2, record, withdrawalId, destChain, chain ++ "." ++ assetId, amount, *ret)
+                                        }
+                                      }
                                     }
                                   }
                                 }
@@ -427,6 +499,35 @@ contract feeOf(@amount, @bps, ret) = {
       }
     }
   } |
+  // Record the burn and, when the wired term enables it, dispatch through the Router.
+  // A failed dispatch still leaves the burn recorded; the withdrawal can be dispatched again.
+  contract bridgeFinishBurn(@s, @balances, @record, @withdrawalId, @destChain, @assetKey, @amount, ret) = {
+    if (s.get("hyperlane") == true) {
+      new dCh in {
+        hyperlaneRouter!("dispatchWithdrawal", destChain, record.get("destAddress"), withdrawalId, assetKey, amount, 0, *dCh) |
+        for (@d <- dCh) {
+          match d {
+            (true, messageId) => {
+              bridgeState!(s.set("balances", balances).set("withdrawals", s.get("withdrawals").set(withdrawalId, record.set("dispatch", messageId)))) |
+              ret!((true, withdrawalId))
+            }
+            _ => {
+              bridgeState!(s.set("balances", balances).set("withdrawals", s.get("withdrawals").set(withdrawalId, record.set("dispatch", "failed")))) |
+              ret!((true, withdrawalId))
+            }
+          }
+        }
+      }
+    } else {
+      bridgeState!(s.set("balances", balances).set("withdrawals", s.get("withdrawals").set(withdrawalId, record))) |
+      ret!((true, withdrawalId))
+    }
+  } |
+
+
+  contract hyperlaneRouter(@"dispatchWithdrawal", @destChain, @destAddress, @withdrawalId, @assetKey, @amount, @nonce, ret) = {
+    ret!((false, "hyperlane disabled"))
+  } |
 
   rs!(bundle+{*Bridge}, *uriCh) |
   for (@uri <- uriCh) {
@@ -444,7 +545,8 @@ contract feeOf(@amount, @bps, ret) = {
       "processedDeposits": {},
       "withdrawals": {},
       "paused": false,
-      "adminNonce": 0
+      "adminNonce": 0,
+      "hyperlane": false
     }) |
     deployId!([uri])
   }

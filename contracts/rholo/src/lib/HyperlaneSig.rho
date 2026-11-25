@@ -1,0 +1,108 @@
+// Signature and checkpoint helpers for the multisig ISM.
+//
+// Hyperlane validators sign the EIP-191-prefixed checkpoint digest with a 65-byte
+// r || s || v signature. rholo's `rho:crypto:secp256k1Verify` consumes DER over a 32-byte
+// prehash, so this converts each signature to DER and lets Guard.rho count signers. The
+// v byte is not needed for verification; low-S is enforced by the signer.
+
+contract hyperlaneEthSigned(@digest, ret) = {
+  new hCh in {
+    hash!("19457468657265756d205369676e6564204d6573736167653a0a3332".hexToBytes() ++ digest, *hCh) |
+    for (@h <- hCh) { ret!(h) }
+  }
+} |
+
+contract hyperlaneDomainHash(@originBytes, @tree, ret) = {
+  new hCh in {
+    hash!(originBytes ++ tree ++ "HYPERLANE".toUtf8Bytes(), *hCh) |
+    for (@h <- hCh) { ret!(h) }
+  }
+} |
+
+contract hyperlaneCheckpointDigest(@domain, @root, @indexBytes, @messageId, ret) = {
+  new innerCh, signedCh in {
+    hash!(domain ++ root ++ indexBytes ++ messageId, *innerCh) |
+    for (@inner <- innerCh) {
+      hyperlaneEthSigned!(inner, *signedCh) |
+      for (@signed <- signedCh) { ret!(signed) }
+    }
+  }
+} |
+
+// Strip leading zero bytes, keeping at least one.
+contract hyperlaneStripZeros(@bytes, @i, ret) = {
+  if (i >= bytes.length() - 1) {
+    ret!(bytes.slice(i, bytes.length()))
+  } else if (bytes.nth(i) == 0) {
+    hyperlaneStripZeros!(bytes, i + 1, *ret)
+  } else {
+    ret!(bytes.slice(i, bytes.length()))
+  }
+} |
+
+// DER INTEGER: 0x02 || length || body, with a 0x00 pad when the high bit is set.
+contract hyperlaneDerInt(@bytes, ret) = {
+  new strippedCh, lenCh in {
+    hyperlaneStripZeros!(bytes, 0, *strippedCh) |
+    for (@stripped <- strippedCh) {
+      if (stripped.nth(0) >= 128) {
+        byteAt!(stripped.length() + 1, *lenCh) |
+        for (@lenByte <- lenCh) {
+          ret!("02".hexToBytes() ++ lenByte ++ "00".hexToBytes() ++ stripped)
+        }
+      } else {
+        byteAt!(stripped.length(), *lenCh) |
+        for (@lenByte <- lenCh) {
+          ret!("02".hexToBytes() ++ lenByte ++ stripped)
+        }
+      }
+    }
+  }
+} |
+
+// DER SEQUENCE: 0x30 || length || r || s.
+contract hyperlaneCompactToDer(@signature, ret) = {
+  if (signature.length() != 65) {
+    ret!((false, "signature length"))
+  } else {
+    new rCh, sCh, lenCh in {
+      hyperlaneDerInt!(signature.slice(0, 32), *rCh) |
+      hyperlaneDerInt!(signature.slice(32, 64), *sCh) |
+      for (@r <- rCh; @s <- sCh) {
+        byteAt!(r.length() + s.length(), *lenCh) |
+        for (@lenByte <- lenCh) {
+          ret!((true, "30".hexToBytes() ++ lenByte ++ r ++ s))
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneSigsToDer(@sigs, @i, @acc, ret) = {
+  if (i >= sigs.length()) {
+    ret!((true, acc))
+  } else {
+    new dCh in {
+      hyperlaneCompactToDer!(sigs.nth(i), *dCh) |
+      for (@d <- dCh) {
+        match d {
+          (true, der) => { hyperlaneSigsToDer!(sigs, i + 1, acc ++ [der], *ret) }
+          _ => { ret!((false, "signature encoding")) }
+        }
+      }
+    }
+  }
+} |
+
+// Split the metadata tail (starting at byte 68) into 65-byte signatures.
+contract hyperlaneSplitSignatures(@metadata, @i, @acc, ret) = {
+  if (68 + i * 65 + 65 > metadata.length()) {
+    ret!(acc)
+  } else {
+    hyperlaneSplitSignatures!(
+      metadata,
+      i + 1,
+      acc ++ [metadata.slice(68 + i * 65, 68 + (i + 1) * 65)],
+      *ret)
+  }
+} |

@@ -8,6 +8,7 @@
 - [Node operator guide](operator-guide.md)
 - [Web dApp](web-app.md)
 - [Deployment](deployment.md)
+- [Hyperlane on rholo](hyperlane.md)
 - [Testing and verification](testing.md)
 - [Current limitations](limitations.md)
 - [Roadmap](roadmap.md)
@@ -20,6 +21,7 @@
 - [Invariants](reference/invariants.md)
 - [Keystore](reference/keystore.md)
 - [Relayer interface](reference/relayer-interface.md)
+- [Hyperlane](reference/hyperlane.md)
 
 # Appendix
 

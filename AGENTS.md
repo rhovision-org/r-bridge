@@ -62,6 +62,8 @@ make devnet-down              # stop the devnet
 make demo                     # Phase 1 end-to-end demo (devnet only)
 make e2e-evm                  # cross-chain EVM <-> rholo demo (Anvil on :8545)
 make mock-relayer             # dev-only HTTP relayer surface on :8099
+make hyperlane-demo           # Rholang Hyperlane v3 suite; 59 checks on the devnet
+make hyperlane-bridge-demo    # wired Bridge + Hyperlane; 31 checks
 make relayer-watch            # dev watcher loop (Anvil -> rholo, rholo -> Anvil)
 make refund-failed            # 2-of-3 admin refund of failed deposits
 make reorg-demo               # safe-head/reorg journal test on its own Anvil

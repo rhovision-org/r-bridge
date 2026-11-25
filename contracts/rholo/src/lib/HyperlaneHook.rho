@@ -1,0 +1,204 @@
+// Hyperlane post-dispatch hooks and the merkle checkpoint tree.
+//
+// The tree is Hyperlane's depth-32, LSB-first tree: count is the 1-based number of
+// inserted leaves; insert stores the carried node at the first level where the count bit
+// is 1; root folds branch[i] on the left for a set bit and the zero hash on the right for
+// a clear bit (see Merkle.sol). The hook is only reachable through the Mailbox's private
+// hook name, so it can trust the message it is handed; it does not call back into the
+// Mailbox while the Mailbox state cell is consumed.
+
+contract hyperlaneNoopHook(@"hookType", ret) = { ret!(0) } |
+
+contract hyperlaneNoopHook(@"quoteDispatch", @metadata, @message, ret) = { ret!(0) } |
+
+contract hyperlaneNoopHook(@"postDispatch", @metadata, @message, ret) = {
+  for (@s <- hookState) {
+    new idCh in {
+      hyperlaneMessageId!(message, *idCh) |
+      for (@id <- idCh) {
+        hookState!(s.set("latest", id.bytesToHex())) |
+        ret!(true)
+      }
+    }
+  }
+} |
+
+contract hyperlaneNoopHook(@"latest", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("latest"))
+  }
+} |
+
+// Immutable list update; lists are Rholang data, so this is a rebuild.
+contract hyperlaneListSet(@list, @index, @value, @i, @acc, ret) = {
+  if (i >= list.length()) {
+    ret!(acc)
+  } else {
+    if (i == index) {
+      hyperlaneListSet!(list, index, value, i + 1, acc ++ [value], *ret)
+    } else {
+      hyperlaneListSet!(list, index, value, i + 1, acc ++ [list.nth(i)], *ret)
+    }
+  }
+} |
+
+contract hyperlaneListRepeat(@value, @count, @i, @acc, ret) = {
+  if (i >= count) {
+    ret!(acc)
+  } else {
+    hyperlaneListRepeat!(value, count, i + 1, acc ++ [value], *ret)
+  }
+} |
+
+// zero[0] = 0x00..00 and zero[i+1] = keccak256(zero[i] || zero[i]); 33 entries cover the
+// empty root of a depth-32 tree.
+contract hyperlaneZeroHashes(@i, @current, @acc, ret) = {
+  if (i >= 33) {
+    ret!(acc)
+  } else {
+    new hCh in {
+      hash!(current ++ current, *hCh) |
+      for (@next <- hCh) {
+        hyperlaneZeroHashes!(i + 1, next, acc ++ [current], *ret)
+      }
+    }
+  }
+} |
+
+// Insert a leaf into the branch. `size` is the new 1-based count; returns
+// (true, newBranch) or (false, "merkle tree full").
+contract hyperlaneTreeInsert(@branch, @node, @size, @i, ret) = {
+  if (i >= 32) {
+    ret!((false, "merkle tree full"))
+  } else if (size % 2 == 1) {
+    new setCh in {
+      hyperlaneListSet!(branch, i, node, 0, [], *setCh) |
+      for (@newBranch <- setCh) {
+        ret!((true, newBranch))
+      }
+    }
+  } else {
+    new hCh in {
+      hash!(branch.nth(i) ++ node, *hCh) |
+      for (@next <- hCh) {
+        hyperlaneTreeInsert!(branch, next, size / 2, i + 1, *ret)
+      }
+    }
+  }
+} |
+
+// Fold the branch and zeros into the root. `bitWeight` is 2^i.
+contract hyperlaneTreeRoot(@branch, @zeroes, @index, @i, @bitWeight, @current, ret) = {
+  if (i >= 32) {
+    ret!(current)
+  } else {
+    if ((index / bitWeight) % 2 == 1) {
+      new hCh in {
+        hash!(branch.nth(i) ++ current, *hCh) |
+        for (@next <- hCh) {
+          hyperlaneTreeRoot!(branch, zeroes, index, i + 1, bitWeight * 2, next, *ret)
+        }
+      }
+    } else {
+      new hCh in {
+        hash!(current ++ zeroes.nth(i), *hCh) |
+        for (@next <- hCh) {
+          hyperlaneTreeRoot!(branch, zeroes, index, i + 1, bitWeight * 2, next, *ret)
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"hookType", ret) = { ret!(3) } |
+contract hyperlaneMerkleTreeHook(@"quoteDispatch", @metadata, @message, ret) = { ret!(0) } |
+
+contract hyperlaneMerkleTreeHook(@"postDispatch", @metadata, @message, ret) = {
+  for (@s <- hookState) {
+    new idCh, insertCh in {
+      hyperlaneMessageId!(message, *idCh) |
+      for (@id <- idCh) {
+        hyperlaneTreeInsert!(s.get("branch"), id, s.get("count") + 1, 0, *insertCh) |
+        for (@inserted <- insertCh) {
+          match inserted {
+            (true, newBranch) => {
+              hookState!(s
+                .set("branch", newBranch)
+                .set("count", s.get("count") + 1)
+                .set("latest", id.bytesToHex())) |
+              ret!(true)
+            }
+            _ => {
+              hookState!(s) |
+              ret!(false)
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"latest", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("latest"))
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"treeId", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("treeId"))
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"count", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("count"))
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"root", ret) = {
+  for (@s <- hookState) {
+    new rootCh in {
+      hyperlaneTreeRoot!(
+        s.get("branch"),
+        s.get("zeroes"),
+        s.get("count"),
+        0,
+        1,
+        "0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(),
+        *rootCh) |
+      for (@root <- rootCh) {
+        hookState!(s) |
+        ret!(root.bytesToHex())
+      }
+    }
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"latestCheckpoint", ret) = {
+  for (@s <- hookState) {
+    new rootCh in {
+      hyperlaneTreeRoot!(
+        s.get("branch"),
+        s.get("zeroes"),
+        s.get("count"),
+        0,
+        1,
+        "0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(),
+        *rootCh) |
+      for (@root <- rootCh) {
+        hookState!(s) |
+        if (s.get("count") == 0) {
+          ret!((root.bytesToHex(), 0))
+        } else {
+          ret!((root.bytesToHex(), s.get("count") - 1))
+        }
+      }
+    }
+  }
+} |

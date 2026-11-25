@@ -1,0 +1,168 @@
+// Hyperlane v3 Mailbox + merkle hook + ISMs + a test recipient.
+//
+// The public Mailbox surface, the capability-gated dispatch door, the depth-32 merkle
+// checkpoint hook, a switchable test ISM, Hyperlane's TrustedRelayerISM and the
+// MessageIdMultisigISM, and a recipient that records what it was handed. The r-bridge
+// Router/Bridge wiring replaces the test recipient in the next phase without changing the
+// Mailbox.
+//
+// Placeholders rendered by the harness: __LOCAL_DOMAIN__, __SENDER_ID__,
+// __TRUSTED_RELAYER__, __ISM_MODE__, __VALIDATORS__, __THRESHOLD__ and __TREE_ID__.
+
+new
+  rs(`rho:registry:insertArbitrary`),
+  deployerId(`rho:rchain:deployerId`),
+  deployId(`rho:rchain:deployId`),
+  blockData(`rho:block:data`),
+  hash(`rho:crypto:keccak256Hash`),
+  dops(`rho:rchain:deployerId:ops`),
+  byteAt, bytesOf, uint32ToBytes, bytesToUint32, uint48ToBytes, bytesToUint48,
+  hyperlaneMessageV3, hyperlaneMessageId, hyperlaneMessageValid, hyperlaneVersion,
+  hyperlaneNonce, hyperlaneOrigin, hyperlaneSender, hyperlaneDestination,
+  hyperlaneRecipient, hyperlaneBody, hyperlaneSenderAddress, hyperlaneRecipientAddress,
+  hyperlaneNoopHook, hyperlaneListSet, hyperlaneListRepeat, hyperlaneZeroHashes,
+  hyperlaneTreeInsert, hyperlaneTreeRoot, hyperlaneMerkleTreeHook,
+  guardAnySig, guardCount,
+  hyperlaneEthSigned, hyperlaneDomainHash, hyperlaneCheckpointDigest, hyperlaneStripZeros,
+  hyperlaneDerInt, hyperlaneCompactToDer, hyperlaneSigsToDer, hyperlaneSplitSignatures,
+  hyperlaneTestIsm, hyperlaneTrustedRelayerIsm, hyperlaneMultisigIsm,
+  hyperlaneCallerId, hyperlaneMailboxDispatch, hyperlaneDispatchDoor,
+  hyperlaneMailbox, hyperlaneDeliver, hyperlaneIsm, hyperlaneRequiredHook,
+  hyperlaneDefaultHook, hyperlaneRecipientContract, hyperlaneMockRecipient,
+  mailboxState, ismState, hookState, recipientState, moduleState, zeroesCh, branchCh,
+  mailboxUri, doorUri, ismUri, hookUri, recipientUri
+in {
+  // @@INLINE:lib/HyperlaneBytes.rho@@
+  // @@INLINE:lib/HyperlaneMessage.rho@@
+  // @@INLINE:lib/HyperlaneHook.rho@@
+  // @@INLINE:lib/HyperlaneSig.rho@@
+  // @@INLINE:lib/HyperlaneIsm.rho@@
+  // @@INLINE:lib/HyperlaneMailbox.rho@@
+  // @@INLINE:lib/Guard.rho@@
+
+  // The configured module. The mode is deployment state so the harness can prove the
+  // test, TrustedRelayerISM and MessageIdMultisigISM paths on one Mailbox.
+  contract hyperlaneIsm(@"verify", @metadata, @message, @processor, ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      if (s.get("mode") == "trusted") {
+        hyperlaneTrustedRelayerIsm!("verify", metadata, message, processor, *ret)
+      } else if (s.get("mode") == "multisig") {
+        hyperlaneMultisigIsm!("verify", metadata, message, processor, *ret)
+      } else {
+        hyperlaneTestIsm!("verify", metadata, message, processor, *ret)
+      }
+    }
+  } |
+
+  contract hyperlaneIsm(@"verify", @metadata, @message, ret) = {
+    hyperlaneIsm!("verify", metadata, message, "", *ret)
+  } |
+
+  contract hyperlaneIsm(@"moduleType", ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      if (s.get("mode") == "multisig") {
+        ret!(5)
+      } else {
+        ret!(6)
+      }
+    }
+  } |
+
+  contract hyperlaneIsm(@"setMode", @mode, ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s.set("mode", mode)) |
+      ret!(true)
+    }
+  } |
+
+  contract hyperlaneIsm(@"mode", ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      ret!(s.get("mode"))
+    }
+  } |
+
+  // Devnet-only configuration forwarded to the shared ISM state.
+  contract hyperlaneIsm(@"setAccept", @value, ret) = {
+    hyperlaneTestIsm!("setAccept", value, *ret)
+  } |
+
+  contract hyperlaneIsm(@"setTrustedRelayer", @value, ret) = {
+    hyperlaneTestIsm!("setTrustedRelayer", value, *ret)
+  } |
+
+  // A required hook that charges nothing; the merkle hook is the default and runs once.
+  contract hyperlaneRequiredHook(@"postDispatch", @metadata, @message, ret) = { ret!(true) } |
+
+  contract hyperlaneDefaultHook(@"postDispatch", @metadata, @message, ret) = {
+    hyperlaneMerkleTreeHook!("postDispatch", metadata, message, *ret)
+  } |
+
+  contract hyperlaneRecipientContract(@"handle", @origin, @sender, @body, ret) = {
+    hyperlaneMockRecipient!("handle", origin, sender, body, *ret)
+  } |
+
+  contract hyperlaneMockRecipient(@"handle", @origin, @sender, @body, ret) = {
+    for (@s <- recipientState) {
+      recipientState!(s
+        .set("count", s.get("count") + 1)
+        .set("lastOrigin", origin)
+        .set("lastSender", sender.bytesToHex())
+        .set("lastBody", body.bytesToHex())) |
+      ret!(true)
+    }
+  } |
+
+  contract hyperlaneMockRecipient(@"state", ret) = {
+    for (@s <- recipientState) {
+      recipientState!(s) |
+      ret!(s)
+    }
+  } |
+
+  hyperlaneZeroHashes!(0, "0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(), [], *zeroesCh) |
+  for (@zeroes <- zeroesCh) {
+    hyperlaneListRepeat!("0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(), 32, 0, [], *branchCh) |
+    for (@branch <- branchCh) {
+      mailboxState!({
+        "localDomain": __LOCAL_DOMAIN__,
+        "nonce": 0,
+        "latestDispatchedId": "",
+        "deliveries": {},
+        "dispatched": {}
+      }) |
+      ismState!({
+        "accept": true,
+        "trustedRelayer": __TRUSTED_RELAYER__,
+        "validators": __VALIDATORS__,
+        "threshold": __THRESHOLD__
+      }) |
+      moduleState!({
+        "mode": __ISM_MODE__
+      }) |
+      hookState!({
+        "branch": branch,
+        "zeroes": zeroes,
+        "count": 0,
+        "latest": "",
+        "treeId": __TREE_ID__
+      }) |
+      recipientState!({
+        "count": 0,
+        "lastOrigin": 0,
+        "lastSender": "",
+        "lastBody": ""
+      }) |
+      rs!(bundle+{*hyperlaneMailbox}, *mailboxUri) |
+      rs!(bundle+{*hyperlaneDispatchDoor}, *doorUri) |
+      rs!(bundle+{*hyperlaneIsm}, *ismUri) |
+      rs!(bundle+{*hyperlaneMerkleTreeHook}, *hookUri) |
+      rs!(bundle+{*hyperlaneMockRecipient}, *recipientUri) |
+      for (@m <- mailboxUri; @d <- doorUri; @i <- ismUri; @h <- hookUri; @r <- recipientUri) {
+        deployId!([m, d, i, h, r])
+      }
+    }
+  }
+}

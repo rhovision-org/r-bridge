@@ -31,7 +31,8 @@ rholo network follows the same install term but needs a funded phlo account, a r
 rendering and an operator runbook that does not exist yet.
 
 The deploy-term budget is 64 KiB inclusive with a 56 KiB planning budget; the current term
-is about 15.5 KiB. `make contracts-check` enforces drift and the budget.
+is about 16 KiB; the wired Hyperlane term is about 56 KiB unrendered. `make
+contracts-check` enforces drift and the budget.
 
 ## Native vault deployment
 

@@ -1,0 +1,72 @@
+// Hyperlane v3 message encoding and field accessors.
+//
+// Layout: version(1) || nonce(4) || origin(4) || sender(32) || destination(4) ||
+//         recipient(32) || body(rest)
+// id = keccak256(message). See spec/hyperlane.md for the golden vector shared with
+// crates/rbridge-core/src/hyperlane.rs and the EVM peer.
+
+contract hyperlaneMessageV3(@version, @nonce, @origin, @sender, @destination, @recipient, @body, ret) = {
+  new vCh, nCh, oCh, dCh in {
+    byteAt!(version, *vCh) |
+    uint32ToBytes!(nonce, *nCh) |
+    uint32ToBytes!(origin, *oCh) |
+    uint32ToBytes!(destination, *dCh) |
+    for (@v <- vCh; @n <- nCh; @o <- oCh; @d <- dCh) {
+      ret!(v ++ n ++ o ++ sender ++ d ++ recipient ++ body)
+    }
+  }
+} |
+
+contract hyperlaneMessageId(@message, ret) = {
+  new hash(`rho:crypto:keccak256Hash`) in {
+    hash!(message, *ret)
+  }
+} |
+
+// Version 3 and at least the 77-byte header. The destination check is the Mailbox's.
+contract hyperlaneMessageValid(@message, ret) = {
+  if (message.length() < 77) {
+    ret!(false)
+  } else {
+    ret!(message.nth(0) == 3)
+  }
+} |
+
+contract hyperlaneVersion(@message, ret) = { ret!(message.nth(0)) } |
+
+contract hyperlaneNonce(@message, ret) = {
+  new bCh in {
+    bytesToUint32!(message.slice(1, 5), *bCh) |
+    for (@v <- bCh) { ret!(v) }
+  }
+} |
+
+contract hyperlaneOrigin(@message, ret) = {
+  new bCh in {
+    bytesToUint32!(message.slice(5, 9), *bCh) |
+    for (@v <- bCh) { ret!(v) }
+  }
+} |
+
+contract hyperlaneSender(@message, ret) = { ret!(message.slice(9, 41)) } |
+
+contract hyperlaneDestination(@message, ret) = {
+  new bCh in {
+    bytesToUint32!(message.slice(41, 45), *bCh) |
+    for (@v <- bCh) { ret!(v) }
+  }
+} |
+
+contract hyperlaneRecipient(@message, ret) = { ret!(message.slice(45, 77)) } |
+
+contract hyperlaneBody(@message, ret) = {
+  if (message.length() <= 77) {
+    ret!("".hexToBytes())
+  } else {
+    ret!(message.slice(77, message.length()))
+  }
+} |
+
+// The low 20 bytes of a bytes32 sender/recipient, the EVM address convention.
+contract hyperlaneSenderAddress(@message, ret) = { ret!(message.slice(21, 41)) } |
+contract hyperlaneRecipientAddress(@message, ret) = { ret!(message.slice(57, 77)) } |

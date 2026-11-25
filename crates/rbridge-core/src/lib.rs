@@ -12,6 +12,7 @@ pub mod asset;
 pub mod chain;
 pub mod digest;
 pub mod error;
+pub mod hyperlane;
 pub mod ids;
 pub mod relayer;
 
