@@ -101,9 +101,9 @@ def main() -> int:
     def mailbox_call(body: str, name: str):
         return call(mailbox, body, name)
 
-    def deposit_payload(external_id: str, amount: int, nonce: int) -> str:
+    def deposit_payload(external_id: str, amount: int, nonce: int, asset: str = ASSET) -> str:
         return (
-            f"rbridge:hyperlane:v1|deposit|{ASSET}|{amount}|"
+            f"rbridge:hyperlane:v1|deposit|{asset}|{amount}|"
             f"{deployer['rev_address']}|{external_id}|{nonce}"
         )
 
@@ -130,10 +130,13 @@ def main() -> int:
             name,
         )
 
-    def balance() -> int:
+    def balance(asset: str = ASSET) -> int:
         return bridge_call(
-            f'C!("balanceOf", "{ASSET}", "{deployer["rev_address"]}", *ret)', "hb_balance.rho"
+            f'C!("balanceOf", "{asset}", "{deployer["rev_address"]}", *ret)', "hb_balance.rho"
         )[1]
+
+    def fees(asset: str = ASSET) -> int:
+        return bridge_call(f'C!("fees", "{asset}", *ret)', "hb_fees.rho")[1]
 
     # 1. Install and read the wired configuration.
     bridge_config = bridge_call('C!("config", *ret)', "hb_config.rho")
@@ -151,6 +154,17 @@ def main() -> int:
         mailbox_call(f'C!("delivered", "{deposit["id"]}", *ret)', "hb_delivered.rho"),
         True,
     )
+
+    # 2b. USDC through the same Router and ledger.
+    usdc_payload = deposit_payload("hyper-usdc-1", 1_000_000, 10, "ethereum.usdc")
+    usdc_message = message(REMOTE_DOMAIN, peer, usdc_payload, 10)
+    expect(
+        "usdc deposit accepted",
+        process(usdc_message["message"], "hb_usdc.rho"),
+        (True, usdc_message["id"]),
+    )
+    expect("usdc credited minus fee", balance("ethereum.usdc"), 999_500)
+    expect("usdc deposit fee", fees("ethereum.usdc"), 500)
 
     # 3. Refusals: wrong sender and bridge-level replay.
     wrong_sender = message(REMOTE_DOMAIN, "00" * 31 + "ee", deposit_payload("hyper-bad-1", 1_000_000, 1), 1)
@@ -275,10 +289,10 @@ def main() -> int:
         (True,),
     )
 
-    # 8. Conservation: deposits = balance + fees + burned.
-    fees = bridge_call(f'C!("fees", "{ASSET}", *ret)', "hb_fees.rho")[1]
-    expect("bridge fees", fees, 1_500)
-    expect("conservation", balance() + fees + 500_000, 3_000_000)
+    # 8. Conservation per asset.
+    expect("usdt fees", fees(ASSET), 1_500)
+    expect("usdt conservation", balance(ASSET) + fees(ASSET) + 500_000, 3_000_000)
+    expect("usdc conservation", balance("ethereum.usdc") + fees("ethereum.usdc"), 1_000_000)
 
     passed = sum(CHECKS)
     print(f"\n{passed}/{len(CHECKS)} checks passed")

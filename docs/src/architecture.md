@@ -45,7 +45,9 @@ deploy terms add Hyperlane: `10_hyperlane.rho` installs the Mailbox, the depth-3
 hook and the test/TrustedRelayer/MessageIdMultisig ISMs with a recording recipient;
 `11_rbridge_hyperlane.rho` wires the Bridge through the Router, so an inbound message
 mints through a private capability and a burn dispatches the outbound payload. The EVM
-companion is `contracts/evm/src/HyperlanePeer.sol`. See [Hyperlane on rholo](hyperlane.md).
+companion is `contracts/evm/src/HyperlanePeer.sol`, a multi-asset USDT/USDC endpoint with
+`RbridgeTrustedRelayerIsm`; `tools/deploy_hyperlane_peer.py` deploys it from a Sepolia
+profile. See [Hyperlane on rholo](hyperlane.md).
 
 ## Components
 
@@ -59,8 +61,8 @@ companion is `contracts/evm/src/HyperlanePeer.sol`. See [Hyperlane on rholo](hyp
 | `rbridge-wasm` | `crates/rbridge-wasm` | rholo key, REV address, digest signing, keystore facade, scaling for the web app | Tested in Node and the browser |
 | Web dApp | `web/` | live rholo/vault reads, portfolio, MetaMask ETH/USDT locks, TronLink TRX/TRC-20 locks, keystore create/import/load, WASM-signed burn, deposit and withdrawal follow-through | 46 unit + 9 Playwright + 5 live |
 | rholo contracts | `contracts/rholo` | current single-contract demo + Guard/Ledger | 30-check devnet demo |
-| Hyperlane suite | `contracts/rholo` (`10_hyperlane.rho`, `11_rbridge_hyperlane.rho`) | Mailbox, merkle hook, ISMs, Router and wired Bridge implementing Hyperlane v3 | 59 + 31-check devnet demos |
-| Hyperlane EVM peer | `contracts/evm/src/HyperlanePeer.sol` | single-asset lock/dispatch and handle/release | 11 Foundry tests |
+| Hyperlane suite | `contracts/rholo` (`10_hyperlane.rho`, `11_rbridge_hyperlane.rho`) | Mailbox, merkle hook, ISMs, Router and wired Bridge implementing Hyperlane v3 | 59 + 35-check devnet demos; 22-check USDT/USDC e2e |
+| Hyperlane EVM peer | `contracts/evm/src/HyperlanePeer.sol` | multi-asset USDT/USDC lock/dispatch and handle/release, with `RbridgeTrustedRelayerIsm` | 25 Foundry tests; 12-check Anvil deployment rehearsal |
 | Ethereum/TVM vault | `contracts/evm`, `contracts/tron` | lock/release, m-of-n unlock, caps, pause, refunds, fees | 10 Foundry tests on Anvil; no Tron deployment |
 | Agoric vat | `contracts/agoric` | Zoe escrow and 2-of-3 release over the shared digest | Local vat tests; no live chain |
 | Dev watcher | `harness/dev_relayer.py` | Anvil deposit watcher and rholo withdrawal watcher, safe-head gate, block-hash journal, metrics/read API | Passes the watcher, reorg, metrics and API demos |

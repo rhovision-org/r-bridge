@@ -2,16 +2,21 @@
 pragma solidity ^0.8.24;
 
 /// @title r-bridge Hyperlane peer
-/// @notice A single-asset Hyperlane endpoint for the r-bridge canonical payload. It locks
-///         an ERC-20 on this chain and dispatches a v3 message; an inbound message with a
-///         `withdraw` payload releases the asset. It is deliberately standalone: the
-///         attested `BridgeVault` is unchanged, so the two rails can be compared.
+/// @notice A multi-asset ERC-20 Hyperlane endpoint for the r-bridge canonical payload. It
+///         locks a configured stablecoin on Ethereum and dispatches a v3 message; an
+///         inbound `withdraw` payload releases the matching token. It is deliberately
+///         standalone: the attested `BridgeVault` is unchanged, so the two rails can be
+///         compared.
 /// @dev Interfaces are declared locally so the contract has no external dependencies.
 interface IMailbox {
     function dispatch(uint32 destinationDomain, bytes32 recipientAddress, bytes calldata body)
         external
         payable
         returns (bytes32 messageId);
+    function quoteDispatch(uint32 destinationDomain, bytes32 recipientAddress, bytes calldata body)
+        external
+        view
+        returns (uint256 fee);
 }
 
 interface IMessageRecipient {
@@ -19,25 +24,43 @@ interface IMessageRecipient {
 }
 
 contract HyperlanePeer is IMessageRecipient {
+    struct AssetInit {
+        address token;
+        string assetKey;
+        /// Native units per rholo base unit: 1 for a 6-decimal stable, 1e10 for 18→8.
+        uint256 scale;
+        uint256 maxDeposit;
+        uint256 maxLocked;
+    }
+
+    struct AssetConfig {
+        bool enabled;
+        uint256 scale;
+        uint256 maxDeposit;
+        uint256 maxLocked;
+        string assetKey;
+    }
+
     address public immutable mailbox;
     uint32 public immutable localDomain;
     uint32 public immutable remoteDomain;
     bytes32 public immutable remotePeer;
-    address public immutable token;
-    string public assetKey;
-    uint256 public immutable scale;
-    uint256 public immutable maxDeposit;
-    uint256 public immutable maxLocked;
+    /// Optional application ISM; the Mailbox uses it when nonzero.
+    address public immutable ism;
     address public immutable owner;
 
     bool public paused;
     uint256 public nonce;
-    uint256 public locked;
+    mapping(address => AssetConfig) public assets;
+    /// keccak256(assetKey) => token, for inbound payloads.
+    mapping(bytes32 => address) public tokenForAssetKey;
+    mapping(address => uint256) public locked;
     mapping(bytes32 => bool) public usedWithdrawal;
     uint256 private _entered;
 
     event DepositDispatched(
         bytes32 indexed messageId,
+        address indexed token,
         address indexed sender,
         uint256 amount,
         uint256 rholoAmount,
@@ -70,47 +93,70 @@ contract HyperlanePeer is IMessageRecipient {
         uint32 localDomain_,
         uint32 remoteDomain_,
         bytes32 remotePeer_,
-        address token_,
-        string memory assetKey_,
-        uint256 scale_,
-        uint256 maxDeposit_,
-        uint256 maxLocked_,
-        address owner_
+        address ism_,
+        address owner_,
+        AssetInit[] memory assetInits
     ) {
-        require(mailbox_ != address(0) && token_ != address(0), "address");
+        require(mailbox_ != address(0), "mailbox");
         require(remotePeer_ != bytes32(0) && owner_ != address(0), "peer");
-        require(bytes(assetKey_).length > 0 && scale_ > 0, "config");
+        require(assetInits.length > 0, "assets");
         mailbox = mailbox_;
         localDomain = localDomain_;
         remoteDomain = remoteDomain_;
         remotePeer = remotePeer_;
-        token = token_;
-        assetKey = assetKey_;
-        scale = scale_;
-        maxDeposit = maxDeposit_;
-        maxLocked = maxLocked_;
+        ism = ism_;
         owner = owner_;
+        for (uint256 i = 0; i < assetInits.length; ++i) {
+            AssetInit memory init = assetInits[i];
+            require(init.token != address(0), "token");
+            require(bytes(init.assetKey).length > 0 && init.scale > 0, "config");
+            require(!assets[init.token].enabled, "duplicate token");
+            bytes32 keyHash = keccak256(bytes(init.assetKey));
+            require(tokenForAssetKey[keyHash] == address(0), "duplicate asset");
+            assets[init.token] = AssetConfig({
+                enabled: true,
+                scale: init.scale,
+                maxDeposit: init.maxDeposit,
+                maxLocked: init.maxLocked,
+                assetKey: init.assetKey
+            });
+            tokenForAssetKey[keyHash] = init.token;
+        }
     }
 
-    /// @notice Lock `amount` (native base units) and dispatch the canonical deposit payload.
-    function lock(uint256 amount, string calldata rholoRecipient) external nonReentrant returns (bytes32) {
-        require(!paused, "paused");
-        require(amount > 0 && amount <= maxDeposit, "amount");
-        require(amount % scale == 0, "scale");
-        require(bytes(rholoRecipient).length > 0, "recipient");
-        uint256 rholoAmount = amount / scale;
+    /// @notice The application ISM; zero means the Mailbox default.
+    function interchainSecurityModule() external view returns (address) {
+        return ism;
+    }
 
-        uint256 newLocked = locked + amount;
-        require(newLocked <= maxLocked, "max locked");
-        locked = newLocked;
+    /// @notice Lock `amount` of `token` and dispatch the canonical deposit payload.
+    /// @dev `msg.value` pays the Mailbox/IGP dispatch fee; it is not part of the lock.
+    function lock(address token, uint256 amount, string calldata rholoRecipient)
+        external
+        payable
+        nonReentrant
+        returns (bytes32)
+    {
+        require(!paused, "paused");
+        AssetConfig memory config = assets[token];
+        require(config.enabled, "asset");
+        require(amount > 0 && amount <= config.maxDeposit, "amount");
+        require(amount % config.scale == 0, "scale");
+        require(bytes(rholoRecipient).length > 0, "recipient");
+        uint256 rholoAmount = amount / config.scale;
+
+        uint256 newLocked = locked[token] + amount;
+        require(newLocked <= config.maxLocked, "max locked");
+        locked[token] = newLocked;
         _safeTransferFrom(token, msg.sender, address(this), amount);
 
         uint256 depositNonce = nonce;
         nonce = depositNonce + 1;
-        bytes32 depositId = keccak256(abi.encode(block.chainid, address(this), msg.sender, depositNonce));
+        bytes32 depositId =
+            keccak256(abi.encode(block.chainid, address(this), token, msg.sender, depositNonce));
         string memory payload = string.concat(
             "rbridge:hyperlane:v1|deposit|",
-            assetKey,
+            config.assetKey,
             "|",
             _toString(rholoAmount),
             "|",
@@ -120,8 +166,11 @@ contract HyperlanePeer is IMessageRecipient {
             "|",
             _toString(depositNonce)
         );
-        bytes32 messageId = IMailbox(mailbox).dispatch(remoteDomain, remotePeer, bytes(payload));
-        emit DepositDispatched(messageId, msg.sender, amount, rholoAmount, rholoRecipient, depositNonce);
+        bytes32 messageId =
+            IMailbox(mailbox).dispatch{value: msg.value}(remoteDomain, remotePeer, bytes(payload));
+        emit DepositDispatched(
+            messageId, token, msg.sender, amount, rholoAmount, rholoRecipient, depositNonce
+        );
         return messageId;
     }
 
@@ -133,21 +182,30 @@ contract HyperlanePeer is IMessageRecipient {
         bytes[] memory parts = _split(body, 7);
         require(_eq(parts[0], "rbridge:hyperlane:v1"), "tag");
         require(_eq(parts[1], "withdraw"), "action");
-        require(_eq(parts[2], assetKey), "asset");
+        address token = tokenForAssetKey[keccak256(parts[2])];
+        require(token != address(0), "asset");
+        AssetConfig memory config = assets[token];
+        require(config.enabled && _eq(parts[2], config.assetKey), "asset");
+
         uint256 rholoAmount = _parseUint(parts[3]);
         require(rholoAmount > 0, "amount");
         address to = _parseAddress(parts[4]);
         bytes32 withdrawalKey = keccak256(parts[5]);
         require(!usedWithdrawal[withdrawalKey], "withdrawal");
         usedWithdrawal[withdrawalKey] = true;
-        _parseUint(parts[6]); // nonce is part of the authenticated string
+        _parseUint(parts[6]); // the nonce is part of the authenticated string
 
-        uint256 nativeAmount = rholoAmount * scale;
-        require(nativeAmount / scale == rholoAmount, "scale");
-        require(locked >= nativeAmount, "locked");
-        locked -= nativeAmount;
+        uint256 nativeAmount = rholoAmount * config.scale;
+        require(nativeAmount / config.scale == rholoAmount, "scale");
+        require(locked[token] >= nativeAmount, "locked");
+        locked[token] -= nativeAmount;
         _safeTransfer(token, to, nativeAmount);
         emit Released(withdrawalKey, token, to, rholoAmount, nativeAmount);
+    }
+
+    /// @notice Quote the Mailbox dispatch fee for a payload of `body`.
+    function quoteDispatch(bytes calldata body) external view returns (uint256) {
+        return IMailbox(mailbox).quoteDispatch(remoteDomain, remotePeer, body);
     }
 
     function setPaused(bool value) external onlyOwner {

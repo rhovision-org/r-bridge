@@ -63,7 +63,11 @@ make demo                     # Phase 1 end-to-end demo (devnet only)
 make e2e-evm                  # cross-chain EVM <-> rholo demo (Anvil on :8545)
 make mock-relayer             # dev-only HTTP relayer surface on :8099
 make hyperlane-demo           # Rholang Hyperlane v3 suite; 59 checks on the devnet
-make hyperlane-bridge-demo    # wired Bridge + Hyperlane; 31 checks
+make hyperlane-bridge-demo    # wired Bridge + Hyperlane (USDT + USDC); 35 checks
+make hyperlane-stables-e2e    # Anvil USDT/USDC lock -> mint -> burn -> release; 22 checks
+make hyperlane-peer-demo      # HyperlanePeer deployment rehearsal; 12 checks
+make deploy-hyperlane-sepolia # evm peer + ISM on Sepolia (refused on mainnet)
+make verify-hyperlane-sepolia # re-read the peer manifest
 make relayer-watch            # dev watcher loop (Anvil -> rholo, rholo -> Anvil)
 make refund-failed            # 2-of-3 admin refund of failed deposits
 make reorg-demo               # safe-head/reorg journal test on its own Anvil

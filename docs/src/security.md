@@ -80,7 +80,8 @@ An external audit should cover, at minimum:
    the Mailbox, merkle hook, ISMs, Router, and the Bridge's mint capability and burn
    dispatch.
 3. `contracts/evm/src/BridgeVault.sol` and its TVM compilation and deployment parameters.
-4. `contracts/evm/src/HyperlanePeer.sol` — the standalone Hyperlane endpoint.
+4. `contracts/evm/src/HyperlanePeer.sol` and `RbridgeTrustedRelayerIsm.sol` — the
+   multi-asset Ethereum stablecoin endpoint and its application ISM.
 5. `contracts/agoric` — the vat, the digest verification, invitation handling and durable
    state.
 6. The canonical message and every signature encoding, against the golden vectors in

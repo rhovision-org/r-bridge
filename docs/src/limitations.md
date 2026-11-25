@@ -45,16 +45,22 @@ the README together.
 ## Hyperlane on-chain
 
 - **No rholo agent.** The Mailbox, depth-32 merkle hook, test/TrustedRelayer/
-  MessageIdMultisig ISMs, Router and wired Bridge pass 59 + 31 devnet checks; the EVM peer
-  passes 11 Foundry tests. rholo is not on the live Hyperlane network; the rholo-side agent
-  is the longer-term work.
+  MessageIdMultisig ISMs, Router and wired Bridge pass 59 + 35 devnet checks; the
+  USDT/USDC Anvil e2e passes 22 and the multi-asset peer's 25 Foundry tests pass. rholo is
+  not on the live Hyperlane network; the rholo-side agent is the longer-term work.
+- **Sepolia is prepared, not broadcast.** `configs/networks/ethereum-sepolia-hyperlane.json`
+  pins the canonical Sepolia Mailbox and the Sepolia test USDC/USDT; the peer deployment
+  path is rehearsed on Anvil (12 checks). Mainnet is refused until the audit.
+- **Dev relayer only.** `hyperlane-stables-e2e` plays the relayer in-process. Both sides
+  use trusted-relayer modules; production needs the rholo agent and a real validator/ISM
+  policy.
 - **Static routes and validators.** `byDomain`/`routes` and the validator set are fixed at
   install; there is no runtime enrolment or rotation. The ISM mode switch is a devnet arm.
 - **Term size.** The wired term is about 56 KiB unrendered and about 60 KiB rendered: under
   the node cap but over the 56 KiB planning budget; splitting the suite and the Bridge is
   the next size step.
-- **One asset, ERC-20 only** on the EVM peer; native-ETH and multi-asset peers are future.
-- **No economic security.** The trusted module trusts one relayer; the multisig module is
+- **ERC-20 only** on the EVM peer (USDT/USDC first); native-ETH is future work.
+- **No economic security.** The trusted modules trust one relayer; the multisig module is
   signature-thresholded but has no bond or slashing.
 
 ## Relayer and trust

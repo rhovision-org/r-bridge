@@ -73,13 +73,21 @@ rholo and the 65-byte form for the vault: `rbridge sign-text-eth --key … --tex
 
 ## Hyperlane peer
 
-`src/HyperlanePeer.sol` is a standalone single-asset Hyperlane endpoint; the attested
-`BridgeVault` is unchanged. `lock` pulls an ERC-20, scales native units to rholo units,
-derives a deposit id from `keccak256(chainid, peer, sender, nonce)`, and dispatches the
+`src/HyperlanePeer.sol` is a standalone multi-asset ERC-20 Hyperlane endpoint for Ethereum
+stables; the attested `BridgeVault` is unchanged. Each asset has a token, a
+chain-qualified key (`ethereum.usdt`, `ethereum.usdc`), a scale and caps. `lock(token,
+amount, rholoRecipient)` pulls the token, scales native units to rholo units, derives a
+deposit id from `keccak256(chainid, peer, token, sender, nonce)`, and dispatches the
 canonical deposit payload through the Mailbox. `handle(origin, sender, body)` requires the
-Mailbox caller and the enrolled origin/sender, parses the withdraw payload, refuses a used
-withdrawal id, and releases `rholoAmount × scale`. It declares the Hyperlane interfaces
-locally and has no external dependencies.
+Mailbox caller and the enrolled origin/sender, maps the payload's asset key to the token,
+refuses a used withdrawal id, and releases `rholoAmount × scale`. `quoteDispatch` exposes
+the Mailbox fee.
+
+`src/RbridgeTrustedRelayerIsm.sol` is the EVM-side trusted-relayer ISM: the peer returns it
+from `interchainSecurityModule()`, and it accepts a message when the Mailbox recorded the
+configured relayer as processor. `tools/deploy_hyperlane_peer.py` deploys the peer and ISM
+from `configs/networks/ethereum-sepolia-hyperlane.json` (mainnet refused), and
+`make hyperlane-peer-demo` rehearses the path on Anvil.
 
 ## Tests
 
@@ -87,14 +95,14 @@ locally and has no external dependencies.
 forge test --root contracts/evm -vv
 ```
 
-21 tests. The 10 vault tests cover ERC-20 lock/unlock, ETH lock/unlock with 18→8 scale, fee
+25 tests. The 10 vault tests cover ERC-20 lock/unlock, ETH lock/unlock with 18→8 scale, fee
 retention and treasury withdrawal, 2-of-3 admin refund of a failed deposit (including
 replay and below-threshold refusals), below-threshold/duplicate-signer/wrong-digest unlock
 refusals, pause blocks lock but not unlock, admin threshold and replay, max deposit and
 nonce replay, and the shared Rust/EVM withdrawal digest golden vector (`d2f0ca02…e805`).
-The 11 peer tests cover lock→dispatch, handle→release, replay/sender/origin/asset refusals,
-direct-handle refusal, pause, dust refusal, and the shared Hyperlane message-id and
-checkpoint golden vectors.
+The 15 peer tests cover USDT/USDC lock→dispatch and handle→release, replay/sender/origin/
+asset refusals, direct-handle refusal, pause, dust refusal, the trusted-relayer ISM, the
+peer's ISM getter, and the shared Hyperlane message-id and checkpoint golden vectors.
 
 The `script/DeployAnvil.s.sol` script deploys an ETH-only vault to local Anvil for the
 cross-chain demo (`make e2e-evm`).

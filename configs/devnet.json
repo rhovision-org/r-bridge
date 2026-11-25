@@ -64,6 +64,19 @@
       "enabled": true
     },
     {
+      "chain": "ethereum",
+      "id": "usdc",
+      "symbol": "USDC",
+      "wrapped": "wUSDC.eth",
+      "nativeDecimals": 6,
+      "rholoDecimals": 6,
+      "feeBpsDeposit": 5,
+      "feeBpsWithdraw": 5,
+      "minDeposit": 1000000,
+      "maxDeposit": 1000000000000,
+      "enabled": true
+    },
+    {
       "chain": "tron",
       "id": "usdt",
       "symbol": "USDT",

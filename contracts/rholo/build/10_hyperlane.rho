@@ -710,6 +710,14 @@ contract hyperlaneMailbox(@"dispatched", @idHex, ret) = {
   }
 } |
 
+// Message ids in dispatch order, for a relayer/agent that must enumerate outbound work.
+contract hyperlaneMailbox(@"dispatchedIds", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("dispatched").keys().toList())
+  }
+} |
+
 contract hyperlaneMailbox(@"quoteDispatch", @destination, @recipient, @body, @metadata, ret) = {
   ret!(0)
 } |

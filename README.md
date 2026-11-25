@@ -8,10 +8,10 @@ sides. It is not a wallet: native accounts stay in MetaMask, TronLink and Keplr.
 |---|---|
 | **What is it?** | A bridge dApp + Rust primitives for rholo. |
 | **Which chains?** | Cosmos/Agoric, Ethereum, Tron first; Hyperliquid later. Bitcoin is deferred. |
-| **Which assets?** | Native assets plus USDT/USDC/DAI where each chain has them, chain-qualified. |
+| **Which assets?** | Ethereum stables first (USDT, USDC); other native assets where each chain has them, chain-qualified. |
 | **What is the trust model?** | Federated m-of-n relayers (2-of-3 to start). The rail they run on is undecided. |
 | **What does it depend on?** | A relayer layer: standalone bridge node or rholo plugin/sidecar — undecided ([issue #563](https://github.com/rhovision-org/rholo/issues/563)). |
-| **Status** | **Phase 1 demo and Phase 2 EVM ↔ rholo cross-chain demo pass on a local rholo devnet + Anvil; the vault and Hyperlane peer pass 21 Foundry tests, and profile-driven deployment + manifest verification pass 23 checks on Anvil.** No public-testnet or mainnet deployment yet; see [Current limitations](docs/src/limitations.md). **No real value moves.** |
+| **Status** | **Phase 1 demo and Phase 2 EVM ↔ rholo cross-chain demo pass on a local rholo devnet + Anvil; the vault and Hyperlane peer pass 25 Foundry tests, the USDT/USDC Hyperlane loop passes 22 e2e checks, and profile-driven deployment + manifest verification pass 23 checks on Anvil.** No public-testnet or mainnet deployment yet; see [Current limitations](docs/src/limitations.md). **No real value moves.** |
 
 ## Documentation
 
@@ -28,7 +28,7 @@ or serve it locally with `cd docs && mdbook serve`.
 | [Node operator guide](docs/src/operator-guide.md) | hardware, economics, keys, incident runbook |
 | [Web dApp](docs/src/web-app.md) | wallets, keystore, settings, flows, web limitations |
 | [Deployment](docs/src/deployment.md) | rholo install, profiles, manifests, Sepolia runbook |
-| [Hyperlane on rholo](docs/src/hyperlane.md) | Hyperlane v3 Mailbox, ISM and hook contracts implemented in Rholang |
+| [Hyperlane on rholo](docs/src/hyperlane.md) | Hyperlane v3 Mailbox, ISM, hook, Router and Ethereum stablecoin peer |
 | [Testing and verification](docs/src/testing.md) | every suite, what it proves, what it does not |
 | [Current limitations](docs/src/limitations.md) | the consolidated, grouped gap list |
 | [Roadmap](docs/src/roadmap.md) and [infrastructure decision](docs/src/infrastructure-decision.md) | phases and the open relayer-rail choice |
@@ -126,16 +126,21 @@ through the Router (inbound mint, burn → dispatch). The EVM companion is
 ```bash
 make devnet-up
 make hyperlane-demo          # suite alone; 59 checks
-make hyperlane-bridge-demo   # wired Bridge; 31 checks
+make hyperlane-bridge-demo   # wired Bridge (USDT + USDC); 35 checks
+make hyperlane-stables-e2e   # Anvil USDT/USDC lock -> mint -> burn -> release; 22 checks
+make hyperlane-peer-demo     # peer deployment rehearsal on its own Anvil; 12 checks
 ```
 
 The suite demo dispatches through the capability-gated door, processes an inbound
 message, checks the merkle checkpoint and the 2-of-3 multisig path, proves the refusals
 leave no delivery, and pins the message id and checkpoint digest against the Rust CLI
-oracle (`rbridge hyperlane message|checkpoint|payload`). The wired demo deposits through
-the Router into the wrapped-asset ledger, burns and checks the outbound dispatch, and
-proves the pause/replay/asset/sender refusals. There is no rholo agent yet; see
-[Hyperlane on rholo](docs/src/hyperlane.md).
+oracle (`rbridge hyperlane message|checkpoint|payload`). The wired demo deposits USDT and
+USDC through the Router into the wrapped-asset ledger, burns and checks the outbound
+dispatch, and proves the pause/replay/asset/sender refusals. The stables e2e runs the
+whole loop against a local Mailbox and the `HyperlanePeer` on Anvil, playing the relayer
+in-process. For Sepolia, `make deploy-hyperlane-sepolia` / `verify-hyperlane-sepolia` use
+`configs/networks/ethereum-sepolia-hyperlane.json`; mainnet is refused. There is no rholo
+agent yet; see [Hyperlane on rholo](docs/src/hyperlane.md).
 
 ## Run the cross-chain demo (EVM ↔ rholo)
 
@@ -227,11 +232,12 @@ what each suite cannot prove, is in
 
 - Phase 1 rholo demo: PASS, 30 checks (mint, replay, below-threshold, burn, withdrawal,
   transfer, pause, treasury fee sweep, conservation).
-- Hyperlane on rholo: PASS, 59 suite checks + 31 wired-bridge checks. The Mailbox
-  (dispatch door + `process`), depth-32 merkle hook, test/TrustedRelayer/2-of-3 multisig
-  ISMs, Router and wired Bridge are installed on the devnet; the standalone EVM peer
-  passes 11 Foundry tests. No rholo agent yet, so this is not live-network
-  interoperability.
+- Hyperlane on rholo: PASS, 59 suite checks + 35 wired-bridge checks + a 22-check
+  USDT/USDC Anvil e2e + a 12-check peer deployment rehearsal. The Mailbox (dispatch door +
+  `process`), depth-32 merkle hook, test/TrustedRelayer/2-of-3 multisig ISMs, Router and
+  wired Bridge are installed on the devnet; the multi-asset USDT/USDC EVM peer and its
+  TrustedRelayerISM pass 25 Foundry tests. Sepolia is prepared but not broadcast; mainnet
+  is refused. No rholo agent yet, so this is not live-network interoperability.
 - Phase 2 EVM vault: 10 Foundry tests pass; ETH and ERC-20 USDT ↔ rholo e2e PASS on
   Anvil + local devnet; failed deposits are journaled and refunded.
 - Phase 2 deployment: `make deploy-demo` passes 23 checks on its own Anvil. Sepolia is
@@ -263,10 +269,11 @@ relayer/admin sets at deployment, so a key change is a redeploy. There is no ERT
 and no relayer fee distribution.
 
 **Hyperlane.** The Mailbox, depth-32 merkle hook, ISMs, Router and wired Bridge pass 59 +
-31 devnet checks; the EVM peer passes 11 Foundry tests. There is no rholo agent, runtime
-route enrolment, native-ETH peer or economic security, so rholo is not on the live
-Hyperlane network. The devnet domain (`9999`) is not registered, and the wired term is
-near the deploy-size budget.
+35 devnet checks; the USDT/USDC Anvil e2e passes 22 and the multi-asset peer's 25 Foundry
+tests pass. Sepolia is prepared but not broadcast; mainnet is refused. There is no rholo
+agent, runtime route enrolment, native-ETH peer or economic security, so rholo is not on
+the live Hyperlane network. The devnet domain (`9999`) is not registered, and the wired
+term is near the deploy-size budget.
 
 **Relayer.** The rail is undecided ([issue #563](https://github.com/rhovision-org/rholo/issues/563)).
 The implemented watcher is dev-only, with fixed keys, a JSON journal, no bond/slashing,

@@ -28,3 +28,14 @@ public testnet yet.
 ```bash
 python3 tools/deploy_evm.py deploy --profile configs/networks/ethereum-sepolia.json --dry-run
 ```
+
+## Hyperlane peer profiles
+
+`ethereum-sepolia-hyperlane.json` is the input to `tools/deploy_hyperlane_peer.py`. It
+pins the canonical Sepolia Mailbox (`0xfFAEF09B3cd11D9b20d1a19bECca54EEC2884766`), the
+rholo domain and peer, the relayer/owner, and the Sepolia test USDC/USDT (6 decimals).
+Fields: `network`, `chainName`, `chainId`, `rpc`, `mailbox`, `localDomain`, `remoteDomain`,
+`remotePeer` (32-byte hex), `relayer`, `owner`, `deployerKeyEnv`, and `assets[]` with
+`assetKey`, `token`, `decimals`, `scale`, `maxDeposit`, `maxLocked`. Mainnet is refused;
+a non-local chain needs `--yes`. The same `${ENV_VAR}` interpolation and key rules as the
+vault profiles apply.

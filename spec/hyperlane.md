@@ -8,9 +8,12 @@ It is the cross-implementation contract for the Rholang Mailbox, the Rust oracle
 
 **Status.** The Mailbox, the depth-32 merkle hook, the test/TrustedRelayer/MessageIdMultisig
 ISMs, the Router and the wired Bridge pass `make hyperlane-demo` (59 checks) and
-`make hyperlane-bridge-demo` (31 checks) on a local devnet. The standalone EVM peer passes
-11 Foundry tests. The rholo agent is not implemented, so nothing here is live-network
-compatible yet and no mainnet value moves.
+`make hyperlane-bridge-demo` (35 checks) on a local devnet. The multi-asset USDT/USDC EVM
+peer and its TrustedRelayerISM pass 25 Foundry tests; `make hyperlane-peer-demo` rehearses
+its profile deployment (12 checks) and `make hyperlane-stables-e2e` runs USDT and USDC
+lock → rholo mint → burn → release on Anvil + the devnet (22 checks). The rholo agent is
+not implemented, so nothing here is live-network compatible yet and no mainnet value
+moves.
 
 ## Message
 
@@ -158,17 +161,35 @@ The Router is the Mailbox's recipient.
 
 ## EVM peer
 
-`contracts/evm/src/HyperlanePeer.sol` is a standalone single-asset endpoint; the attested
-`BridgeVault` is unchanged.
+`contracts/evm/src/HyperlanePeer.sol` is a standalone multi-asset ERC-20 endpoint for
+Ethereum stables; the attested `BridgeVault` is unchanged.
 
-- `lock(amount, rholoRecipient)` pulls an ERC-20, scales native units to rholo units,
-  derives a deposit id from `keccak256(chainid, peer, sender, nonce)`, and dispatches the
-  canonical deposit payload.
+- Configuration: a `token`, chain-qualified `assetKey`, `scale`, per-tx and locked caps
+  per asset. USDT and USDC are the first assets (6 decimals, scale 1).
+- `lock(token, amount, rholoRecipient)` pulls the ERC-20, scales native units to rholo
+  units, derives a deposit id from
+  `keccak256(chainid, peer, token, sender, nonce)`, and dispatches the canonical deposit
+  payload. `msg.value` pays the Mailbox/IGP fee.
 - `handle(origin, sender, body)` requires the Mailbox caller and the enrolled
-  origin/sender, parses the withdraw payload, refuses a used withdrawal id, and releases
-  `rholoAmount × scale`.
+  origin/sender, maps the payload's asset key to the token, refuses a used withdrawal id,
+  and releases `rholoAmount × scale`.
+- `interchainSecurityModule()` returns the configured application ISM. The companion
+  `RbridgeTrustedRelayerIsm` accepts a message when the Mailbox recorded the configured
+  relayer as its processor; it is the EVM analogue of the rholo TrustedRelayerIsm.
+- `quoteDispatch(body)` exposes the Mailbox quote for a payload.
 - The message-id and checkpoint golden vectors are asserted in
   `contracts/evm/test/HyperlanePeer.t.sol`.
+
+## Deployment
+
+`tools/deploy_hyperlane_peer.py` deploys from a profile in `configs/networks/`:
+`ethereum-sepolia-hyperlane.json` pins the canonical Sepolia Mailbox
+(`0xfFAEF09B3cd11D9b20d1a19bECca54EEC2884766`), the rholo domain/peer, the relayer and
+owner, and USDC (`0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`) and USDT
+(`0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0`), both 6-decimal test stables. The tool
+refuses mainnet, checks the chain id, the Mailbox's `localDomain`, token code and
+decimals, deploys the peer and ISM, reads them back, and writes a gitignored manifest.
+`verify` re-reads it. `make hyperlane-peer-demo` rehearses the path on Anvil.
 
 ## Golden vectors
 

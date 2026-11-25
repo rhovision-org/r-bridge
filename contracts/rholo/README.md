@@ -64,9 +64,11 @@ Libraries:
 - `src/lib/HyperlaneRouter.rho` — peer check, payload parse, mint capability, dispatch.
 
 `harness/hyperlane_demo.py` (`make hyperlane-demo`, 59 checks) exercises the suite;
-`harness/hyperlane_bridge_demo.py` (`make hyperlane-bridge-demo`, 31 checks) exercises the
-wired Bridge. The normative formats are in `spec/hyperlane.md`. The rholo agent, runtime
-route/validator enrolment and native/multi-asset EVM peers are not implemented.
+`harness/hyperlane_bridge_demo.py` (`make hyperlane-bridge-demo`, 35 checks) exercises the
+wired Bridge with USDT and USDC; `harness/hyperlane_stables_e2e.py`
+(`make hyperlane-stables-e2e`, 22 checks) runs the full Anvil → rholo → Anvil loop. The
+normative formats are in `spec/hyperlane.md`. The rholo agent, runtime route/validator
+enrolment and native-ETH support are not implemented.
 
 ## Tests
 

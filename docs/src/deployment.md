@@ -109,6 +109,29 @@ base-unit caps and scales. The schema is documented in `deployments/README.md`.
 The development watcher still reads `.devnet/evm.json`; wiring manifests into the
 production relayer belongs to the rail decision.
 
+## Hyperlane peer (Sepolia)
+
+`tools/deploy_hyperlane_peer.py` deploys `HyperlanePeer` and `RbridgeTrustedRelayerIsm`
+from `configs/networks/ethereum-sepolia-hyperlane.json`. The tool refuses mainnet, checks
+the chain id, the canonical Mailbox's `localDomain`, and every stablecoin's code and
+decimals, deploys, reads the peer back from the chain, and writes
+`deployments/hyperlane-peer-<network>.json` (gitignored). The assets are the Sepolia test
+USDC (`0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`) and USDT
+(`0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0`), both 6 decimals.
+
+```bash
+export SEPOLIA_RPC_URL=https://…
+export SEPOLIA_DEPLOYER_KEY=0x…            # funded testnet key; never commit
+export SEPOLIA_ADMIN=0x…                   # peer owner
+export RBRIDGE_HYPERLANE_RELAYER=0x…       # dev relayer address (ISM)
+export RBRIDGE_RHOLO_PEER=0x…              # 32-byte rholo Router id
+make deploy-hyperlane-sepolia
+make verify-hyperlane-sepolia
+```
+
+`make hyperlane-peer-demo` rehearses the same path on its own Anvil (:8548), including
+read-back, manifest verification and the refusal paths.
+
 ## Testnet status
 
 | Rail | Testnet | Contract source | Deployment tooling | Status |
