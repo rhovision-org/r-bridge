@@ -11,7 +11,11 @@ every suite, what it proves, and what it cannot prove.
 | Rust workspace | `cargo test --workspace` | digest/amount/id logic, relayer client (both chain response shapes, 404-to-null, path-safe ids), keystore interop, chain seam | On-chain behaviour |
 | Contract build | `make contracts-check` | generated deploy terms match the sources; 56 KiB budget; no drift | Semantics |
 | rholo demo | `make demo` (30 checks) | install, config, asset lookup, 2-of-3 mint, replay refusal, below-threshold refusal, unknown asset, burn, withdrawal completion, transfer, pause/unpause, admin nonce replay, treasury fee sweep, conservation | Multi-validator finality; native chains |
-| Foundry | `make evm-test` (10 tests) | vault lock/unlock, 18→8 scaling, fees, refund, threshold/duplicate-signer/wrong-digest refusals, pause semantics, admin replay, shared Rust/EVM digest golden vector | Any real chain; TVM compilation |
+| Hyperlane suite | `make hyperlane-demo` (59 checks) | Mailbox dispatch/process, message id vs the Rust oracle, depth-32 merkle tree/checkpoint, test/TrustedRelayer/MessageIdMultisig ISMs, replay/destination/version/ISM refusals, no delivery on refusal, checkpoint golden vector, payload canonical form | The rholo agent, runtime route enrolment, or a live Hyperlane network |
+| Hyperlane bridge | `make hyperlane-bridge-demo` (35 checks) | inbound USDT/USDC deposits through the Router mint on the Bridge; burn dispatches the outbound payload; wrong sender/asset/replay/pause refusals; 2-of-3 multisig deposit; per-asset conservation | A live EVM peer or relayer; runtime route changes |
+| Hyperlane stables e2e | `make hyperlane-stables-e2e` (22 checks) | Anvil USDT and USDC lock → rholo process → mint; rholo burn → EVM process → release; the peer/ISM deployed through the profile tool; both directions copies messages | Sepolia; the rholo agent; production ISM policy |
+| Hyperlane peer deploy | `make hyperlane-peer-demo` (12 checks) | profile deploy, on-chain read-back, manifest write/verify, tamper detection, mainnet/chain-id/decimals/missing-key refusals on its own Anvil | A public-testnet deployment |
+| Foundry | `make evm-test` (25 tests) | vault lock/unlock, 18→8 scaling, fees, refund, threshold/duplicate-signer/wrong-digest refusals, pause semantics, admin replay, shared Rust/EVM digest golden vector; multi-asset peer lock/dispatch/release for USDT and USDC, replay/sender/origin/asset refusals, pause, dust, TrustedRelayerISM, message-id and checkpoint golden vectors | Any real chain; TVM compilation |
 | Cross-chain e2e | `make e2e-evm` | ETH and USDT lock → 2-of-3 attestation → rholo mint → burn → 65-byte signatures → Anvil unlock → completion, with fee and scale accounting | Sepolia, Tron, Agoric; decentralized relayers |
 | Deployment rehearsal | `make deploy-demo` (23 checks) | profile deploy, chain read-back, manifest write/verify/tamper detection, ERC-20 code/decimals checks, mainnet and non-local refusals, missing-env refusal, `print-env` | A public-testnet deployment |
 | Reorg demo | `make reorg-demo` | safe-head cursor rewind on an unprocessed reorg; halt when a settled deposit is reorged out | A deep real-chain reorg |
@@ -25,8 +29,9 @@ every suite, what it proves, and what it cannot prove.
 | Docs | `make docs-check` | book links/includes/orphans resolve; mdBook builds | Content correctness |
 
 `make check` runs the Rust gates, contract build check, Foundry tests, the deployment
-rehearsal, the web checks and the docs build. It does **not** run `agoric-test` or
-`web-e2e`; those have their own targets and CI jobs.
+rehearsal, the web checks and the docs build. It does **not** run `agoric-test`,
+`web-e2e`, or the devnet suites (`demo`, `hyperlane-demo`); those have their own targets
+and, where a devnet is available, their own runs.
 
 ## What the demos actually exercise
 

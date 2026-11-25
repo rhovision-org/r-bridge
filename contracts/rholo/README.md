@@ -37,15 +37,43 @@ the wire formats (`spec/attestation.md`) do not change.
 ## Constraints respected in the demo
 
 - One state cell per object; consume, validate, repost exactly once on every path.
-- No `select`; block-height deadlines; 56 KiB budget (measured 15.5 KiB).
+- No `select`; block-height deadlines; 56 KiB budget (bridge ~16 KiB; wired Hyperlane
+  term ~56 KiB unrendered).
 - Every mutating arm checks idempotency first; every value-moving path has a
   conservation test; every refusal path reposts the cell.
 - Amounts are `i64` rholo base units; the demo uses USDT 6 decimals and ETH 8.
 - Burn remains available while paused; mints fail closed.
 
+## Hyperlane v3 suite
+
+The bridge arms live in `src/lib/Bridge.rho` and are shared by two terms:
+
+- `src/deploy/10_hyperlane.rho` — the suite alone: Mailbox, merkle hook, ISMs, recording
+  recipient.
+- `src/deploy/11_rbridge_hyperlane.rho` — the Bridge wired through the Router.
+
+Libraries:
+
+- `src/lib/HyperlaneBytes.rho` — big-endian uint32/uint48 encode/decode.
+- `src/lib/HyperlaneMessage.rho` — v3 message format, field accessors, message id.
+- `src/lib/HyperlaneHook.rho` — depth-32 merkle tree, `root`/`count`/`latestCheckpoint`.
+- `src/lib/HyperlaneSig.rho` — EIP-191 digest, compact→DER, metadata signature split.
+- `src/lib/HyperlaneIsm.rho` — test, TrustedRelayer and MessageIdMultisig ISMs.
+- `src/lib/HyperlaneAscii.rho` — ASCII body → string and decimal parsing.
+- `src/lib/HyperlaneMailbox.rho` — capability-gated dispatch, public `process`, deliveries.
+- `src/lib/HyperlaneRouter.rho` — peer check, payload parse, mint capability, dispatch.
+
+`harness/hyperlane_demo.py` (`make hyperlane-demo`, 59 checks) exercises the suite;
+`harness/hyperlane_bridge_demo.py` (`make hyperlane-bridge-demo`, 35 checks) exercises the
+wired Bridge with USDT and USDC; `harness/hyperlane_stables_e2e.py`
+(`make hyperlane-stables-e2e`, 22 checks) runs the full Anvil → rholo → Anvil loop. The
+normative formats are in `spec/hyperlane.md`. The rholo agent, runtime route/validator
+enrolment and native-ETH support are not implemented.
+
 ## Tests
 
 `make demo` runs the behavioural suite on a local devnet: install, config, asset lookup,
 valid mint, replay, below-threshold, unknown asset, burn, withdrawal completion,
-transfer, pause/unpause, and conservation. See `harness/README.md` for what is not yet
-covered.
+transfer, pause/unpause, and conservation. `make hyperlane-demo` and
+`make hyperlane-bridge-demo` cover the Hyperlane suite and the wired Bridge. See
+`harness/README.md` for what is not yet covered.

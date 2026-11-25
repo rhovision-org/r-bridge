@@ -18,10 +18,11 @@ rholo node add-on); everything in this repository is built to be rail-agnostic. 
 Everything below was run on the date in the roadmap. "Tested" means a named suite passed
 in this repository, not that a public network was used.
 
-| Area | State (2026-11-10) | Evidence |
+| Area | State (2026-11-25) | Evidence |
 |---|---|---|
 | rholo bridge contract | Tested on a local devnet | `make demo`: 30 checks |
 | Ethereum/TVM vault | Tested on Anvil | 10 Foundry tests; `make e2e-evm` |
+| Hyperlane on rholo | Tested on a local devnet | `make hyperlane-demo`: 59; `make hyperlane-bridge-demo`: 35; stables e2e: 22; peer deploy rehearsal: 12; 25 peer/vault Foundry tests |
 | Vault deployment tooling | Rehearsed on Anvil, not broadcast to a public testnet | `make deploy-demo`: 23 checks |
 | Development relayer | Tested against Anvil and the devnet | watcher loop; `reorg-demo`, `metrics-demo`, `api-demo` |
 | Web dApp | Tested with stubs and a local chain | 46 unit, 9 Playwright, 5 opt-in live tests |

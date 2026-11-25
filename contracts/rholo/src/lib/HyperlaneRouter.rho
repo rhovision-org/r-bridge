@@ -1,0 +1,111 @@
+// The r-bridge Hyperlane Router.
+//
+// Inbound: the Mailbox calls hyperlaneRouterHandle(origin, sender, body). The sender must
+// match the peer enrolled for the origin domain; the body must be the canonical r-bridge
+// deposit payload; the Router then calls the Bridge's private mint capability.
+//
+// Outbound: the Bridge's burn calls dispatchWithdrawal, which builds the canonical
+// withdraw payload and dispatches it through the Mailbox door to the routed peer.
+//
+// Routes are deployment state (byDomain for inbound, routes by chain name for outbound).
+
+contract hyperlaneRouterHandle(@origin, @sender, @body, ret) = {
+  for (@s <- routerState) {
+    match s.get("byDomain").get(origin.toString()) {
+      Nil => {
+        routerState!(s) | ret!(false)
+      }
+      peer => {
+        if (peer != sender.bytesToHex()) {
+          routerState!(s) | ret!(false)
+        } else {
+          new asciiCh in {
+            hyperlaneBytesToAscii!(body, 0, "", *asciiCh) |
+            for (@ascii <- asciiCh) {
+              match ascii {
+                (true, text) => { hyperlaneRouterParse!(s, text, *ret) }
+                _ => { routerState!(s) | ret!(false) }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneRouterParse(@s, @text, ret) = {
+  match text.split("|") {
+    fields => {
+      if (fields.length() != 7) {
+        routerState!(s) | ret!(false)
+      } else if (fields.nth(0) != "rbridge:hyperlane:v1") {
+        routerState!(s) | ret!(false)
+      } else if (fields.nth(1) != "deposit") {
+        routerState!(s) | ret!(false)
+      } else {
+        new amountCh, nonceCh in {
+          hyperlaneAsciiToInt!(fields.nth(3), 0, 0, *amountCh) |
+          hyperlaneAsciiToInt!(fields.nth(6), 0, 0, *nonceCh) |
+          for (@amountR <- amountCh; @nonceR <- nonceCh) {
+            match (amountR, nonceR) {
+              ((true, amount), (true, nonce)) => {
+                if (amount <= 0) {
+                  routerState!(s) | ret!(false)
+                } else {
+                  new mintCh in {
+                    bridgeHyperlaneMint!(fields.nth(2), fields.nth(5), amount, fields.nth(4), nonce, *mintCh) |
+                    for (@m <- mintCh) {
+                      match m {
+                        (true, credited) => { routerState!(s) | ret!(true) }
+                        _ => { routerState!(s) | ret!(false) }
+                      }
+                    }
+                  }
+                }
+              }
+              _ => { routerState!(s) | ret!(false) }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneRouter(@"dispatchWithdrawal", @destChain, @destAddress, @withdrawalId, @assetKey, @amount, @nonce, ret) = {
+  for (@s <- routerState) {
+    match s.get("routes").get(destChain) {
+      Nil => {
+        routerState!(s) | ret!((false, "unrouted chain"))
+      }
+      route => {
+        routerState!(s) |
+        match "rbridge:hyperlane:v1|withdraw|" ++ assetKey ++ "|" ++ amount.toString() ++ "|" ++ destAddress ++ "|" ++ withdrawalId ++ "|" ++ nonce.toString() {
+          payload => {
+            new dCh in {
+              hyperlaneDispatchDoor!("dispatch", route.get("domain"), route.get("peer").hexToBytes(), payload.toUtf8Bytes(), "".hexToBytes(), *dCh) |
+              for (@d <- dCh) {
+                ret!(d)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneRouter(@"routes", ret) = {
+  for (@s <- routerState) {
+    routerState!(s) |
+    ret!(s.get("routes"))
+  }
+} |
+
+contract hyperlaneRouter(@"byDomain", ret) = {
+  for (@s <- routerState) {
+    routerState!(s) |
+    ret!(s.get("byDomain"))
+  }
+} |

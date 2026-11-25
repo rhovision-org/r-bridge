@@ -1,0 +1,170 @@
+// r-bridge with the Hyperlane Mailbox wired to the wrapped-asset ledger.
+//
+// The Bridge arms are the same lib as 00_bridge. In this term the Hyperlane path is on:
+// an inbound Hyperlane message is verified by the Mailbox's ISM, delivered to the Router,
+// parsed and minted through the Bridge's private capability; a burn records the withdrawal
+// and dispatches the canonical withdraw payload through the Router.
+//
+// The Router and the dispatch door are not registered: only the Bridge, Mailbox, ISM and
+// merkle hook have public read surfaces. Registering the ISM exposes its devnet mode
+// switch; production omits that arm.
+//
+// The harness renders the Bridge parameters, the Hyperlane domain/validator settings and
+// the Router's inbound and outbound route maps. Do not name placeholders in comments: a
+// rendered multi-line map would escape the comment.
+
+new
+  Bridge, bridgeState,
+  rs(`rho:registry:insertArbitrary`),
+  deployerId(`rho:rchain:deployerId`),
+  deployId(`rho:rchain:deployId`),
+  blockData(`rho:block:data`),
+  hash(`rho:crypto:keccak256Hash`),
+  dops(`rho:rchain:deployerId:ops`),
+  uriCh,
+  guardAnySig, guardCount,
+  callerAddress, callerPubKey, listContains, balanceOf, setBalance, addAmount, feeOf,
+  bridgeMintCore, bridgeHyperlaneMint, bridgeFinishBurn,
+  byteAt, bytesOf, uint32ToBytes, bytesToUint32, uint48ToBytes, bytesToUint48,
+  hyperlaneMessageV3, hyperlaneMessageId, hyperlaneMessageValid, hyperlaneVersion,
+  hyperlaneNonce, hyperlaneOrigin, hyperlaneSender, hyperlaneDestination,
+  hyperlaneRecipient, hyperlaneBody, hyperlaneSenderAddress, hyperlaneRecipientAddress,
+  hyperlaneNoopHook, hyperlaneListSet, hyperlaneListRepeat, hyperlaneZeroHashes,
+  hyperlaneTreeInsert, hyperlaneTreeRoot, hyperlaneMerkleTreeHook,
+  hyperlaneEthSigned, hyperlaneDomainHash, hyperlaneCheckpointDigest, hyperlaneStripZeros,
+  hyperlaneDerInt, hyperlaneCompactToDer, hyperlaneSigsToDer, hyperlaneSplitSignatures,
+  hyperlaneAsciiChar, hyperlaneBytesToAscii, hyperlaneAsciiDigit, hyperlaneAsciiToInt,
+  hyperlaneTestIsm, hyperlaneTrustedRelayerIsm, hyperlaneMultisigIsm,
+  hyperlaneCallerId, hyperlaneMailboxDispatch, hyperlaneDispatchDoor,
+  hyperlaneMailbox, hyperlaneDeliver, hyperlaneIsm, hyperlaneRequiredHook,
+  hyperlaneDefaultHook, hyperlaneRecipientContract,
+  hyperlaneRouter, hyperlaneRouterHandle, hyperlaneRouterParse,
+  mailboxState, ismState, hookState, moduleState, routerState, zeroesCh, branchCh,
+  bridgeUri, mailboxUri, ismUri, hookUri
+in {
+  // @@INLINE:lib/Guard.rho@@
+  // @@INLINE:lib/Ledger.rho@@
+  // @@INLINE:lib/Bridge.rho@@
+  // @@INLINE:lib/HyperlaneBytes.rho@@
+  // @@INLINE:lib/HyperlaneMessage.rho@@
+  // @@INLINE:lib/HyperlaneHook.rho@@
+  // @@INLINE:lib/HyperlaneSig.rho@@
+  // @@INLINE:lib/HyperlaneAscii.rho@@
+  // @@INLINE:lib/HyperlaneIsm.rho@@
+  // @@INLINE:lib/HyperlaneMailbox.rho@@
+  // @@INLINE:lib/HyperlaneRouter.rho@@
+
+  contract hyperlaneIsm(@"verify", @metadata, @message, @processor, ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      if (s.get("mode") == "trusted") {
+        hyperlaneTrustedRelayerIsm!("verify", metadata, message, processor, *ret)
+      } else if (s.get("mode") == "multisig") {
+        hyperlaneMultisigIsm!("verify", metadata, message, processor, *ret)
+      } else {
+        hyperlaneTestIsm!("verify", metadata, message, processor, *ret)
+      }
+    }
+  } |
+
+  contract hyperlaneIsm(@"verify", @metadata, @message, ret) = {
+    hyperlaneIsm!("verify", metadata, message, "", *ret)
+  } |
+
+  contract hyperlaneIsm(@"moduleType", ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      if (s.get("mode") == "multisig") { ret!(5) } else { ret!(6) }
+    }
+  } |
+
+  contract hyperlaneIsm(@"setMode", @mode, ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s.set("mode", mode)) |
+      ret!(true)
+    }
+  } |
+
+  contract hyperlaneIsm(@"mode", ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      ret!(s.get("mode"))
+    }
+  } |
+
+  contract hyperlaneIsm(@"setAccept", @value, ret) = {
+    hyperlaneTestIsm!("setAccept", value, *ret)
+  } |
+
+  contract hyperlaneIsm(@"setTrustedRelayer", @value, ret) = {
+    hyperlaneTestIsm!("setTrustedRelayer", value, *ret)
+  } |
+
+  contract hyperlaneRequiredHook(@"postDispatch", @metadata, @message, ret) = { ret!(true) } |
+
+  contract hyperlaneDefaultHook(@"postDispatch", @metadata, @message, ret) = {
+    hyperlaneMerkleTreeHook!("postDispatch", metadata, message, *ret)
+  } |
+
+  contract hyperlaneRecipientContract(@"handle", @origin, @sender, @body, ret) = {
+    hyperlaneRouterHandle!(origin, sender, body, *ret)
+  } |
+
+  hyperlaneZeroHashes!(0, "0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(), [], *zeroesCh) |
+  for (@zeroes <- zeroesCh) {
+    hyperlaneListRepeat!("0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(), 32, 0, [], *branchCh) |
+    for (@branch <- branchCh) {
+      bridgeState!({
+        "network": __NETWORK__,
+        "bridgeId": __BRIDGE_ID__,
+        "treasury": __TREASURY__,
+        "admins": __ADMINS__,
+        "adminThreshold": __ADMIN_THRESHOLD__,
+        "relayers": __RELAYERS__,
+        "relayerThreshold": __RELAYER_THRESHOLD__,
+        "assets": __ASSETS__,
+        "balances": {},
+        "fees": {},
+        "processedDeposits": {},
+        "withdrawals": {},
+        "paused": false,
+        "adminNonce": 0,
+        "hyperlane": true
+      }) |
+      routerState!({
+        "byDomain": __BY_DOMAIN__,
+        "routes": __ROUTES__
+      }) |
+      mailboxState!({
+        "localDomain": __LOCAL_DOMAIN__,
+        "nonce": 0,
+        "latestDispatchedId": "",
+        "deliveries": {},
+        "dispatched": {}
+      }) |
+      ismState!({
+        "accept": true,
+        "trustedRelayer": __TRUSTED_RELAYER__,
+        "validators": __VALIDATORS__,
+        "threshold": __THRESHOLD__
+      }) |
+      moduleState!({
+        "mode": __ISM_MODE__
+      }) |
+      hookState!({
+        "branch": branch,
+        "zeroes": zeroes,
+        "count": 0,
+        "latest": "",
+        "treeId": __TREE_ID__
+      }) |
+      rs!(bundle+{*Bridge}, *bridgeUri) |
+      rs!(bundle+{*hyperlaneMailbox}, *mailboxUri) |
+      rs!(bundle+{*hyperlaneIsm}, *ismUri) |
+      rs!(bundle+{*hyperlaneMerkleTreeHook}, *hookUri) |
+      for (@b <- bridgeUri; @m <- mailboxUri; @i <- ismUri; @h <- hookUri) {
+        deployId!([b, m, i, h])
+      }
+    }
+  }
+}

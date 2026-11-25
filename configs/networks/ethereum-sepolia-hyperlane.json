@@ -1,0 +1,33 @@
+{
+  "schema": "rbridge.hyperlane-peer.v1",
+  "network": "rbridge-sepolia",
+  "chainName": "ethereum",
+  "chainId": 11155111,
+  "rpc": "${SEPOLIA_RPC_URL}",
+  "mailbox": "0xfFAEF09B3cd11D9b20d1a19bECca54EEC2884766",
+  "localDomain": 11155111,
+  "remoteDomain": 9999,
+  "remotePeer": "${RBRIDGE_RHOLO_PEER}",
+  "relayer": "${RBRIDGE_HYPERLANE_RELAYER}",
+  "owner": "${SEPOLIA_ADMIN}",
+  "deployerKeyEnv": "SEPOLIA_DEPLOYER_KEY",
+  "mainnet": false,
+  "assets": [
+    {
+      "assetKey": "ethereum.usdc",
+      "token": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+      "decimals": 6,
+      "scale": 1,
+      "maxDeposit": "10000000000",
+      "maxLocked": "1000000000000"
+    },
+    {
+      "assetKey": "ethereum.usdt",
+      "token": "0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0",
+      "decimals": 6,
+      "scale": 1,
+      "maxDeposit": "10000000000",
+      "maxLocked": "1000000000000"
+    }
+  ]
+}

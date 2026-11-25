@@ -1,0 +1,1590 @@
+// r-bridge with the Hyperlane Mailbox wired to the wrapped-asset ledger.
+//
+// The Bridge arms are the same lib as 00_bridge. In this term the Hyperlane path is on:
+// an inbound Hyperlane message is verified by the Mailbox's ISM, delivered to the Router,
+// parsed and minted through the Bridge's private capability; a burn records the withdrawal
+// and dispatches the canonical withdraw payload through the Router.
+//
+// The Router and the dispatch door are not registered: only the Bridge, Mailbox, ISM and
+// merkle hook have public read surfaces. Registering the ISM exposes its devnet mode
+// switch; production omits that arm.
+//
+// The harness renders the Bridge parameters, the Hyperlane domain/validator settings and
+// the Router's inbound and outbound route maps. Do not name placeholders in comments: a
+// rendered multi-line map would escape the comment.
+
+new
+  Bridge, bridgeState,
+  rs(`rho:registry:insertArbitrary`),
+  deployerId(`rho:rchain:deployerId`),
+  deployId(`rho:rchain:deployId`),
+  blockData(`rho:block:data`),
+  hash(`rho:crypto:keccak256Hash`),
+  dops(`rho:rchain:deployerId:ops`),
+  uriCh,
+  guardAnySig, guardCount,
+  callerAddress, callerPubKey, listContains, balanceOf, setBalance, addAmount, feeOf,
+  bridgeMintCore, bridgeHyperlaneMint, bridgeFinishBurn,
+  byteAt, bytesOf, uint32ToBytes, bytesToUint32, uint48ToBytes, bytesToUint48,
+  hyperlaneMessageV3, hyperlaneMessageId, hyperlaneMessageValid, hyperlaneVersion,
+  hyperlaneNonce, hyperlaneOrigin, hyperlaneSender, hyperlaneDestination,
+  hyperlaneRecipient, hyperlaneBody, hyperlaneSenderAddress, hyperlaneRecipientAddress,
+  hyperlaneNoopHook, hyperlaneListSet, hyperlaneListRepeat, hyperlaneZeroHashes,
+  hyperlaneTreeInsert, hyperlaneTreeRoot, hyperlaneMerkleTreeHook,
+  hyperlaneEthSigned, hyperlaneDomainHash, hyperlaneCheckpointDigest, hyperlaneStripZeros,
+  hyperlaneDerInt, hyperlaneCompactToDer, hyperlaneSigsToDer, hyperlaneSplitSignatures,
+  hyperlaneAsciiChar, hyperlaneBytesToAscii, hyperlaneAsciiDigit, hyperlaneAsciiToInt,
+  hyperlaneTestIsm, hyperlaneTrustedRelayerIsm, hyperlaneMultisigIsm,
+  hyperlaneCallerId, hyperlaneMailboxDispatch, hyperlaneDispatchDoor,
+  hyperlaneMailbox, hyperlaneDeliver, hyperlaneIsm, hyperlaneRequiredHook,
+  hyperlaneDefaultHook, hyperlaneRecipientContract,
+  hyperlaneRouter, hyperlaneRouterHandle, hyperlaneRouterParse,
+  mailboxState, ismState, hookState, moduleState, routerState, zeroesCh, branchCh,
+  bridgeUri, mailboxUri, ismUri, hookUri
+in {
+// M-of-N secp256k1 verification over a 32-byte digest.
+//
+// The digest is computed by the caller (Bridge) from the canonical r-bridge message.
+// Signatures are DER low-S; keys are 65-byte uncompressed secp256k1 public keys.
+// guardAnySig searches the supplied signatures for one that verifies under a key;
+// guardCount walks the key set and counts keys with at least one valid signature.
+// This lets a relayer omit its signature without leaving a hole in the list.
+
+contract guardAnySig(@digest, @sigs, @j, @key, ret) = {
+  if (j >= sigs.length()) {
+    ret!(false)
+  } else {
+    new verify(`rho:crypto:secp256k1Verify`), vCh in {
+      match sigs.nth(j) {
+        sig => {
+          verify!(digest, sig, key, *vCh) |
+          for (@ok <- vCh) {
+            if (ok) { ret!(true) }
+            else { guardAnySig!(digest, sigs, j + 1, key, *ret) }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract guardCount(@digest, @sigs, @i, @count, @keys, @threshold, ret) = {
+  if (i >= keys.length()) {
+    ret!(count >= threshold)
+  } else {
+    match keys.nth(i) {
+      key => {
+        new anyCh in {
+          guardAnySig!(digest, sigs, 0, key, *anyCh) |
+          for (@any <- anyCh) {
+            if (any) { guardCount!(digest, sigs, i + 1, count + 1, keys, threshold, *ret) }
+            else { guardCount!(digest, sigs, i + 1, count, keys, threshold, *ret) }
+          }
+        }
+      }
+    }
+  }
+} |
+// Identity, balances and integer fee helpers for the bridge contract.
+
+// The caller's REV address. rholo's REV address is the string-keyed holder identity in
+// the bridge ledger; the deployerId is the unforgeable caller identity.
+contract callerAddress(dId, ret) = {
+  new dops(`rho:rchain:deployerId:ops`), rev(`rho:rev:address`), pkCh, addrCh in {
+    dops!("pubKeyBytes", *dId, *pkCh) |
+    for (@pk <- pkCh) {
+      rev!("fromPublicKey", pk, *addrCh) |
+      for (@addr <- addrCh) { ret!((true, addr)) }
+    }
+  }
+} |
+
+// The caller's 65-byte secp256k1 public key, for relayer membership checks.
+contract callerPubKey(dId, ret) = {
+  new dops(`rho:rchain:deployerId:ops`), pkCh in {
+    dops!("pubKeyBytes", *dId, *pkCh) |
+    for (@pk <- pkCh) { ret!(pk) }
+  }
+} |
+
+contract listContains(@list, @value, @i, ret) = {
+  if (i >= list.length()) {
+    ret!(false)
+  } else {
+    if (list.nth(i) == value) { ret!(true) }
+    else { listContains!(list, value, i + 1, *ret) }
+  }
+} |
+
+contract balanceOf(@s, @assetKey, @owner, ret) = {
+  match s.get("balances").get(assetKey) {
+    Nil => { ret!(0) }
+    m => {
+      match m.get(owner) {
+        Nil => { ret!(0) }
+        v => { ret!(v) }
+      }
+    }
+  }
+} |
+
+contract setBalance(@balances, @assetKey, @owner, @value, ret) = {
+  match balances.get(assetKey) {
+    Nil => { ret!(balances.set(assetKey, {}.set(owner, value))) }
+    m => { ret!(balances.set(assetKey, m.set(owner, value))) }
+  }
+} |
+
+contract addAmount(@map, @key, @amount, ret) = {
+  match map.get(key) {
+    Nil => { ret!(map.set(key, amount)) }
+    v => { ret!(map.set(key, v + amount)) }
+  }
+} |
+
+// floor(amount * bps / 10000) without an intermediate that can overflow i64.
+contract feeOf(@amount, @bps, ret) = {
+  ret!(amount / 10000 * bps + (amount % 10000) * bps / 10000)
+} |
+// The r-bridge wrapped-asset contract arms, shared by the attested deploy term and the
+// Hyperlane-wired term. State is `bridgeState`; identity helpers come from Ledger.rho and
+// threshold verification from Guard.rho.
+//
+// Additions over the Phase 1 demo: `bridgeMintCore` is the shared mint body,
+// `bridgeHyperlaneMint` is the capability-gated path the Hyperlane Router holds, and
+// `bridgeFinishBurn` records a withdrawal and optionally dispatches it through the Router.
+
+  contract Bridge(@"balanceOf", @assetKey, @owner, ret) = {
+    for (@s <<- bridgeState) {
+      new bCh in {
+        balanceOf!(s, assetKey, owner, *bCh) |
+        for (@b <- bCh) { ret!((true, b)) }
+      }
+    }
+  } |
+
+  contract Bridge(@"asset", @assetKey, ret) = {
+    for (@s <<- bridgeState) {
+      match s.get("assets").get(assetKey) {
+        Nil => { ret!((false, "unknown asset")) }
+        a => { ret!((true, a)) }
+      }
+    }
+  } |
+
+  contract Bridge(@"fees", @assetKey, ret) = {
+    for (@s <<- bridgeState) {
+      match s.get("fees").get(assetKey) {
+        Nil => { ret!((true, 0)) }
+        v => { ret!((true, v)) }
+      }
+    }
+  } |
+
+  contract Bridge(@"withdrawal", @withdrawalId, ret) = {
+    for (@s <<- bridgeState) {
+      match s.get("withdrawals").get(withdrawalId) {
+        Nil => { ret!((false, "unknown withdrawal")) }
+        w => { ret!((true, w)) }
+      }
+    }
+  } |
+
+  contract Bridge(@"pendingWithdrawals", ret) = {
+    for (@s <<- bridgeState) {
+      ret!((true, s.get("withdrawals").keys().toList()))
+    }
+  } |
+
+  contract Bridge(@"config", ret) = {
+    for (@s <<- bridgeState) {
+      ret!((true, {
+        "network": s.get("network"),
+        "bridgeId": s.get("bridgeId"),
+        "treasury": s.get("treasury"),
+        "paused": s.get("paused"),
+        "relayers": s.get("relayers"),
+        "relayerThreshold": s.get("relayerThreshold"),
+        "adminThreshold": s.get("adminThreshold")
+      }))
+    }
+  } |
+
+  contract Bridge(@"transfer", @assetKey, @to, @amount, ret) = {
+    for (@s <- bridgeState) {
+      new aCh in {
+        callerAddress!(*deployerId, *aCh) |
+        for (@a <- aCh) {
+          match a {
+            (true, from) => {
+              if (amount <= 0) {
+                bridgeState!(s) | ret!((false, "amount"))
+              } else if (to.length() == 0) {
+                bridgeState!(s) | ret!((false, "recipient"))
+              } else {
+                new bCh in {
+                  balanceOf!(s, assetKey, from, *bCh) |
+                  for (@bal <- bCh) {
+                    if (bal < amount) {
+                      bridgeState!(s) | ret!((false, "insufficient balance"))
+                    } else {
+                      new sb1, sb2, tCh in {
+                        setBalance!(s.get("balances"), assetKey, from, bal - amount, *sb1) |
+                        for (@b1 <- sb1) {
+                          balanceOf!(s, assetKey, to, *tCh) |
+                          for (@toBal <- tCh) {
+                            setBalance!(b1, assetKey, to, toBal + amount, *sb2) |
+                            for (@b2 <- sb2) {
+                              bridgeState!(s.set("balances", b2)) |
+                              ret!((true, Nil))
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            _ => { bridgeState!(s) | ret!((false, "identity")) }
+          }
+        }
+      }
+    }
+  } |
+
+  contract Bridge(@"mint", @chain, @assetId, @externalTxId, @amount, @recipient, @nonce, @sigs, ret) = {
+    for (@s <- bridgeState) {
+      match (s.get("paused"), s.get("assets").get(chain ++ "." ++ assetId)) {
+        (true, _) => { bridgeState!(s) | ret!((false, "paused")) }
+        (_, Nil) => { bridgeState!(s) | ret!((false, "unknown asset")) }
+        (_, asset) => {
+          if (asset.get("enabled") != true) {
+            bridgeState!(s) | ret!((false, "asset disabled"))
+          } else if (recipient.length() == 0) {
+            bridgeState!(s) | ret!((false, "recipient"))
+          } else if (amount < asset.get("minDeposit") || amount > asset.get("maxDeposit")) {
+            bridgeState!(s) | ret!((false, "amount out of bounds"))
+          } else {
+            match s.get("processedDeposits").get(externalTxId) {
+              Nil => {
+                match "rbridge:v1|" ++ s.get("network") ++ "|" ++ chain ++ "|" ++ s.get("bridgeId") ++ "|" ++ chain ++ "." ++ assetId ++ "|deposit|" ++ externalTxId ++ "|" ++ amount.toString() ++ "|" ++ recipient ++ "|" ++ nonce.toString() {
+                  payload => {
+                    new hCh, okCh in {
+                      hash!(payload.toUtf8Bytes(), *hCh) |
+                      for (@digest <- hCh) {
+                        guardCount!(digest, sigs, 0, 0, s.get("relayers"), s.get("relayerThreshold"), *okCh) |
+                        for (@ok <- okCh) {
+                          if (ok == false) {
+                            bridgeState!(s) | ret!((false, "below threshold"))
+                          } else {
+                            new cCh in {
+                              bridgeMintCore!(s, chain ++ "." ++ assetId, externalTxId, amount, recipient, *cCh) |
+                              for (@r <- cCh) {
+                                match r {
+                                  (true, newState, credited) => {
+                                    bridgeState!(newState) | ret!((true, credited))
+                                  }
+                                  (false, reason) => {
+                                    bridgeState!(s) | ret!((false, reason))
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              _ => { bridgeState!(s) | ret!((false, "replay")) }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  // Shared mint body. Pure over `s`: returns (true, newState, credited) or
+  // (false, reason). Callers repost exactly one state.
+  contract bridgeMintCore(@s, @assetKey, @externalTxId, @amount, @recipient, ret) = {
+    match (s.get("paused"), s.get("assets").get(assetKey)) {
+      (true, _) => { ret!((false, "paused")) }
+      (_, Nil) => { ret!((false, "unknown asset")) }
+      (_, asset) => {
+        if (asset.get("enabled") != true) {
+          ret!((false, "asset disabled"))
+        } else if (recipient.length() == 0) {
+          ret!((false, "recipient"))
+        } else if (amount < asset.get("minDeposit") || amount > asset.get("maxDeposit")) {
+          ret!((false, "amount out of bounds"))
+        } else {
+          match s.get("processedDeposits").get(externalTxId) {
+            Nil => {
+              new fCh in {
+                feeOf!(amount, asset.get("feeBpsDeposit"), *fCh) |
+                for (@fee <- fCh) {
+                  new bCh, sbCh, fbCh in {
+                    balanceOf!(s, assetKey, recipient, *bCh) |
+                    for (@bal <- bCh) {
+                      setBalance!(s.get("balances"), assetKey, recipient, bal + amount - fee, *sbCh) |
+                      for (@b2 <- sbCh) {
+                        addAmount!(s.get("fees"), assetKey, fee, *fbCh) |
+                        for (@f2 <- fbCh) {
+                          ret!((true, s.set("balances", b2).set("fees", f2).set("processedDeposits", s.get("processedDeposits").set(externalTxId, true)), amount - fee))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            _ => { ret!((false, "replay")) }
+          }
+        }
+      }
+    }
+  } |
+
+  // The Hyperlane Router holds this name; it is not registered publicly and does not
+  // require relayer signatures because the Mailbox's ISM already authorised the message.
+  contract bridgeHyperlaneMint(@assetKey, @externalTxId, @amount, @recipient, @nonce, ret) = {
+    for (@s <- bridgeState) {
+      new cCh in {
+        bridgeMintCore!(s, assetKey, externalTxId, amount, recipient, *cCh) |
+        for (@r <- cCh) {
+          match r {
+            (true, newState, credited) => {
+              bridgeState!(newState) | ret!((true, credited))
+            }
+            (false, reason) => {
+              bridgeState!(s) | ret!((false, reason))
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  contract Bridge(@"burn", @chain, @assetId, @amount, @destChain, @destAddress, @withdrawalId, ret) = {
+    for (@s <- bridgeState) {
+      new aCh in {
+        callerAddress!(*deployerId, *aCh) |
+        for (@a <- aCh) {
+          match a {
+            (true, owner) => {
+              if (amount <= 0) {
+                bridgeState!(s) | ret!((false, "amount"))
+              } else {
+                match s.get("withdrawals").get(withdrawalId) {
+                  Nil => {
+                    match s.get("assets").get(chain ++ "." ++ assetId) {
+                      Nil => { bridgeState!(s) | ret!((false, "unknown asset")) }
+                      asset => {
+                        new bCh in {
+                          balanceOf!(s, chain ++ "." ++ assetId, owner, *bCh) |
+                          for (@bal <- bCh) {
+                            if (bal < amount) {
+                              bridgeState!(s) | ret!((false, "insufficient balance"))
+                            } else {
+                              new fCh in {
+                                feeOf!(amount, asset.get("feeBpsWithdraw"), *fCh) |
+                                for (@fee <- fCh) {
+                                  new sbCh in {
+                                    setBalance!(s.get("balances"), chain ++ "." ++ assetId, owner, bal - amount, *sbCh) |
+                                    for (@b2 <- sbCh) {
+                                      new recCh in {
+                                        recCh!({
+                                          "owner": owner,
+                                          "chain": chain,
+                                          "assetId": assetId,
+                                          "amount": amount,
+                                          "fee": fee,
+                                          "destChain": destChain,
+                                          "destAddress": destAddress,
+                                          "status": "pending"
+                                        }) |
+                                        for (@record <- recCh) {
+                                          bridgeFinishBurn!(s, b2, record, withdrawalId, destChain, chain ++ "." ++ assetId, amount, *ret)
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  _ => { bridgeState!(s) | ret!((false, "replay")) }
+                }
+              }
+            }
+            _ => { bridgeState!(s) | ret!((false, "identity")) }
+          }
+        }
+      }
+    }
+  } |
+
+  contract Bridge(@"completeWithdrawal", @withdrawalId, @nativeTxHash, ret) = {
+    for (@s <- bridgeState) {
+      new pkCh in {
+        callerPubKey!(*deployerId, *pkCh) |
+        for (@pk <- pkCh) {
+          new cCh in {
+            listContains!(s.get("relayers"), pk, 0, *cCh) |
+            for (@isRelayer <- cCh) {
+              match s.get("withdrawals").get(withdrawalId) {
+                Nil => { bridgeState!(s) | ret!((false, "unknown withdrawal")) }
+                w => {
+                  if (isRelayer == false) {
+                    bridgeState!(s) | ret!((false, "not a relayer"))
+                  } else if (w.get("status") != "pending") {
+                    bridgeState!(s) | ret!((false, "already complete"))
+                  } else {
+                    bridgeState!(s.set("withdrawals", s.get("withdrawals").set(withdrawalId, w.set("status", "complete").set("nativeTxHash", nativeTxHash)))) |
+                    ret!((true, Nil))
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  contract Bridge(@"admin", @action, @args, @nonce, @sigs, ret) = {
+    for (@s <- bridgeState) {
+      if (nonce <= s.get("adminNonce")) {
+        bridgeState!(s) | ret!((false, "replay"))
+      } else {
+        match "rbridge:admin:v1|" ++ action ++ "|" ++ args ++ "|" ++ nonce.toString() {
+          payload => {
+            new hCh, okCh in {
+            hash!(payload.toUtf8Bytes(), *hCh) |
+            for (@digest <- hCh) {
+              guardCount!(digest, sigs, 0, 0, s.get("admins"), s.get("adminThreshold"), *okCh) |
+              for (@ok <- okCh) {
+                if (ok == false) {
+                  bridgeState!(s) | ret!((false, "below threshold"))
+                } else {
+                  if (action == "setPaused") {
+                    if (args == "true") {
+                      bridgeState!(s.set("paused", true).set("adminNonce", nonce)) | ret!((true, Nil))
+                    } else if (args == "false") {
+                      bridgeState!(s.set("paused", false).set("adminNonce", nonce)) | ret!((true, Nil))
+                    } else {
+                      bridgeState!(s) | ret!((false, "bad args"))
+                    }
+                  } else if (action == "withdrawFees") {
+                    // Sweep the accrued deposit fees for one asset to the treasury
+                    // account. Fees move from the fee bucket into the treasury's
+                    // wrapped balance, so circulating + fees is unchanged.
+                    if (s.get("treasury").length() == 0) {
+                      bridgeState!(s) | ret!((false, "treasury"))
+                    } else {
+                      match s.get("fees").get(args) {
+                        Nil => { bridgeState!(s) | ret!((false, "no fees")) }
+                        accrued => {
+                          if (accrued <= 0) {
+                            bridgeState!(s) | ret!((false, "no fees"))
+                          } else {
+                            new tCh, sbCh in {
+                              balanceOf!(s, args, s.get("treasury"), *tCh) |
+                              for (@toBal <- tCh) {
+                                setBalance!(s.get("balances"), args, s.get("treasury"), toBal + accrued, *sbCh) |
+                                for (@b2 <- sbCh) {
+                                  bridgeState!(s.set("balances", b2).set("fees", s.get("fees").set(args, 0)).set("adminNonce", nonce)) |
+                                  ret!((true, accrued))
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  } else {
+                    bridgeState!(s) | ret!((false, "unknown action"))
+                  }
+                }
+              }
+            }
+            }
+          }
+        }
+      }
+    }
+  } |
+  // Record the burn and, when the wired term enables it, dispatch through the Router.
+  // A failed dispatch still leaves the burn recorded; the withdrawal can be dispatched again.
+  contract bridgeFinishBurn(@s, @balances, @record, @withdrawalId, @destChain, @assetKey, @amount, ret) = {
+    if (s.get("hyperlane") == true) {
+      new dCh in {
+        hyperlaneRouter!("dispatchWithdrawal", destChain, record.get("destAddress"), withdrawalId, assetKey, amount, 0, *dCh) |
+        for (@d <- dCh) {
+          match d {
+            (true, messageId) => {
+              bridgeState!(s.set("balances", balances).set("withdrawals", s.get("withdrawals").set(withdrawalId, record.set("dispatch", messageId)))) |
+              ret!((true, withdrawalId))
+            }
+            _ => {
+              bridgeState!(s.set("balances", balances).set("withdrawals", s.get("withdrawals").set(withdrawalId, record.set("dispatch", "failed")))) |
+              ret!((true, withdrawalId))
+            }
+          }
+        }
+      }
+    } else {
+      bridgeState!(s.set("balances", balances).set("withdrawals", s.get("withdrawals").set(withdrawalId, record))) |
+      ret!((true, withdrawalId))
+    }
+  } |
+
+// Big-endian integer <-> byte-array helpers for Hyperlane message encoding.
+//
+// Rholang has no integer-to-byte constructor, but it has a 256-entry hex literal,
+// `hexToBytes`, `slice`, `nth`, `++`, and the integer shift/bitwise ops. Building the
+// byte table once from a literal and slicing one byte at a time keeps the encoding
+// deterministic and identical to `abi.encodePacked(uint32)`.
+//
+// Preconditions: uint helpers are called with non-negative, in-range values. Every
+// field of a dispatched message is range-checked before it reaches them.
+
+contract byteAt(@value, ret) = {
+  match "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff".hexToBytes().slice(value, value + 1) {
+    byte => { ret!(byte) }
+  }
+} |
+
+contract bytesOf(@values, @i, @acc, ret) = {
+  if (i >= values.length()) {
+    ret!(acc)
+  } else {
+    new bCh in {
+      byteAt!(values.nth(i), *bCh) |
+      for (@b <- bCh) {
+        bytesOf!(values, i + 1, acc ++ b, *ret)
+      }
+    }
+  }
+} |
+
+contract uint32ToBytes(@value, ret) = {
+  bytesOf!([
+    (value / 16777216) % 256,
+    (value / 65536) % 256,
+    (value / 256) % 256,
+    value % 256
+  ], 0, "".hexToBytes(), *ret)
+} |
+
+contract bytesToUint32(@bytes, ret) = {
+  ret!(bytes.nth(0) * 16777216 + bytes.nth(1) * 65536 + bytes.nth(2) * 256 + bytes.nth(3))
+} |
+
+contract uint48ToBytes(@value, ret) = {
+  bytesOf!([
+    (value / 1099511627776) % 256,
+    (value / 4294967296) % 256,
+    (value / 16777216) % 256,
+    (value / 65536) % 256,
+    (value / 256) % 256,
+    value % 256
+  ], 0, "".hexToBytes(), *ret)
+} |
+
+contract bytesToUint48(@bytes, ret) = {
+  ret!(bytes.nth(0) * 1099511627776 + bytes.nth(1) * 4294967296 + bytes.nth(2) * 16777216
+     + bytes.nth(3) * 65536 + bytes.nth(4) * 256 + bytes.nth(5))
+} |
+// Hyperlane v3 message encoding and field accessors.
+//
+// Layout: version(1) || nonce(4) || origin(4) || sender(32) || destination(4) ||
+//         recipient(32) || body(rest)
+// id = keccak256(message). See spec/hyperlane.md for the golden vector shared with
+// crates/rbridge-core/src/hyperlane.rs and the EVM peer.
+
+contract hyperlaneMessageV3(@version, @nonce, @origin, @sender, @destination, @recipient, @body, ret) = {
+  new vCh, nCh, oCh, dCh in {
+    byteAt!(version, *vCh) |
+    uint32ToBytes!(nonce, *nCh) |
+    uint32ToBytes!(origin, *oCh) |
+    uint32ToBytes!(destination, *dCh) |
+    for (@v <- vCh; @n <- nCh; @o <- oCh; @d <- dCh) {
+      ret!(v ++ n ++ o ++ sender ++ d ++ recipient ++ body)
+    }
+  }
+} |
+
+contract hyperlaneMessageId(@message, ret) = {
+  new hash(`rho:crypto:keccak256Hash`) in {
+    hash!(message, *ret)
+  }
+} |
+
+// Version 3 and at least the 77-byte header. The destination check is the Mailbox's.
+contract hyperlaneMessageValid(@message, ret) = {
+  if (message.length() < 77) {
+    ret!(false)
+  } else {
+    ret!(message.nth(0) == 3)
+  }
+} |
+
+contract hyperlaneVersion(@message, ret) = { ret!(message.nth(0)) } |
+
+contract hyperlaneNonce(@message, ret) = {
+  new bCh in {
+    bytesToUint32!(message.slice(1, 5), *bCh) |
+    for (@v <- bCh) { ret!(v) }
+  }
+} |
+
+contract hyperlaneOrigin(@message, ret) = {
+  new bCh in {
+    bytesToUint32!(message.slice(5, 9), *bCh) |
+    for (@v <- bCh) { ret!(v) }
+  }
+} |
+
+contract hyperlaneSender(@message, ret) = { ret!(message.slice(9, 41)) } |
+
+contract hyperlaneDestination(@message, ret) = {
+  new bCh in {
+    bytesToUint32!(message.slice(41, 45), *bCh) |
+    for (@v <- bCh) { ret!(v) }
+  }
+} |
+
+contract hyperlaneRecipient(@message, ret) = { ret!(message.slice(45, 77)) } |
+
+contract hyperlaneBody(@message, ret) = {
+  if (message.length() <= 77) {
+    ret!("".hexToBytes())
+  } else {
+    ret!(message.slice(77, message.length()))
+  }
+} |
+
+// The low 20 bytes of a bytes32 sender/recipient, the EVM address convention.
+contract hyperlaneSenderAddress(@message, ret) = { ret!(message.slice(21, 41)) } |
+contract hyperlaneRecipientAddress(@message, ret) = { ret!(message.slice(57, 77)) } |
+// Hyperlane post-dispatch hooks and the merkle checkpoint tree.
+//
+// The tree is Hyperlane's depth-32, LSB-first tree: count is the 1-based number of
+// inserted leaves; insert stores the carried node at the first level where the count bit
+// is 1; root folds branch[i] on the left for a set bit and the zero hash on the right for
+// a clear bit (see Merkle.sol). The hook is only reachable through the Mailbox's private
+// hook name, so it can trust the message it is handed; it does not call back into the
+// Mailbox while the Mailbox state cell is consumed.
+
+contract hyperlaneNoopHook(@"hookType", ret) = { ret!(0) } |
+
+contract hyperlaneNoopHook(@"quoteDispatch", @metadata, @message, ret) = { ret!(0) } |
+
+contract hyperlaneNoopHook(@"postDispatch", @metadata, @message, ret) = {
+  for (@s <- hookState) {
+    new idCh in {
+      hyperlaneMessageId!(message, *idCh) |
+      for (@id <- idCh) {
+        hookState!(s.set("latest", id.bytesToHex())) |
+        ret!(true)
+      }
+    }
+  }
+} |
+
+contract hyperlaneNoopHook(@"latest", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("latest"))
+  }
+} |
+
+// Immutable list update; lists are Rholang data, so this is a rebuild.
+contract hyperlaneListSet(@list, @index, @value, @i, @acc, ret) = {
+  if (i >= list.length()) {
+    ret!(acc)
+  } else {
+    if (i == index) {
+      hyperlaneListSet!(list, index, value, i + 1, acc ++ [value], *ret)
+    } else {
+      hyperlaneListSet!(list, index, value, i + 1, acc ++ [list.nth(i)], *ret)
+    }
+  }
+} |
+
+contract hyperlaneListRepeat(@value, @count, @i, @acc, ret) = {
+  if (i >= count) {
+    ret!(acc)
+  } else {
+    hyperlaneListRepeat!(value, count, i + 1, acc ++ [value], *ret)
+  }
+} |
+
+// zero[0] = 0x00..00 and zero[i+1] = keccak256(zero[i] || zero[i]); 33 entries cover the
+// empty root of a depth-32 tree.
+contract hyperlaneZeroHashes(@i, @current, @acc, ret) = {
+  if (i >= 33) {
+    ret!(acc)
+  } else {
+    new hCh in {
+      hash!(current ++ current, *hCh) |
+      for (@next <- hCh) {
+        hyperlaneZeroHashes!(i + 1, next, acc ++ [current], *ret)
+      }
+    }
+  }
+} |
+
+// Insert a leaf into the branch. `size` is the new 1-based count; returns
+// (true, newBranch) or (false, "merkle tree full").
+contract hyperlaneTreeInsert(@branch, @node, @size, @i, ret) = {
+  if (i >= 32) {
+    ret!((false, "merkle tree full"))
+  } else if (size % 2 == 1) {
+    new setCh in {
+      hyperlaneListSet!(branch, i, node, 0, [], *setCh) |
+      for (@newBranch <- setCh) {
+        ret!((true, newBranch))
+      }
+    }
+  } else {
+    new hCh in {
+      hash!(branch.nth(i) ++ node, *hCh) |
+      for (@next <- hCh) {
+        hyperlaneTreeInsert!(branch, next, size / 2, i + 1, *ret)
+      }
+    }
+  }
+} |
+
+// Fold the branch and zeros into the root. `bitWeight` is 2^i.
+contract hyperlaneTreeRoot(@branch, @zeroes, @index, @i, @bitWeight, @current, ret) = {
+  if (i >= 32) {
+    ret!(current)
+  } else {
+    if ((index / bitWeight) % 2 == 1) {
+      new hCh in {
+        hash!(branch.nth(i) ++ current, *hCh) |
+        for (@next <- hCh) {
+          hyperlaneTreeRoot!(branch, zeroes, index, i + 1, bitWeight * 2, next, *ret)
+        }
+      }
+    } else {
+      new hCh in {
+        hash!(current ++ zeroes.nth(i), *hCh) |
+        for (@next <- hCh) {
+          hyperlaneTreeRoot!(branch, zeroes, index, i + 1, bitWeight * 2, next, *ret)
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"hookType", ret) = { ret!(3) } |
+contract hyperlaneMerkleTreeHook(@"quoteDispatch", @metadata, @message, ret) = { ret!(0) } |
+
+contract hyperlaneMerkleTreeHook(@"postDispatch", @metadata, @message, ret) = {
+  for (@s <- hookState) {
+    new idCh, insertCh in {
+      hyperlaneMessageId!(message, *idCh) |
+      for (@id <- idCh) {
+        hyperlaneTreeInsert!(s.get("branch"), id, s.get("count") + 1, 0, *insertCh) |
+        for (@inserted <- insertCh) {
+          match inserted {
+            (true, newBranch) => {
+              hookState!(s
+                .set("branch", newBranch)
+                .set("count", s.get("count") + 1)
+                .set("latest", id.bytesToHex())) |
+              ret!(true)
+            }
+            _ => {
+              hookState!(s) |
+              ret!(false)
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"latest", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("latest"))
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"treeId", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("treeId"))
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"count", ret) = {
+  for (@s <- hookState) {
+    hookState!(s) |
+    ret!(s.get("count"))
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"root", ret) = {
+  for (@s <- hookState) {
+    new rootCh in {
+      hyperlaneTreeRoot!(
+        s.get("branch"),
+        s.get("zeroes"),
+        s.get("count"),
+        0,
+        1,
+        "0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(),
+        *rootCh) |
+      for (@root <- rootCh) {
+        hookState!(s) |
+        ret!(root.bytesToHex())
+      }
+    }
+  }
+} |
+
+contract hyperlaneMerkleTreeHook(@"latestCheckpoint", ret) = {
+  for (@s <- hookState) {
+    new rootCh in {
+      hyperlaneTreeRoot!(
+        s.get("branch"),
+        s.get("zeroes"),
+        s.get("count"),
+        0,
+        1,
+        "0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(),
+        *rootCh) |
+      for (@root <- rootCh) {
+        hookState!(s) |
+        if (s.get("count") == 0) {
+          ret!((root.bytesToHex(), 0))
+        } else {
+          ret!((root.bytesToHex(), s.get("count") - 1))
+        }
+      }
+    }
+  }
+} |
+// Signature and checkpoint helpers for the multisig ISM.
+//
+// Hyperlane validators sign the EIP-191-prefixed checkpoint digest with a 65-byte
+// r || s || v signature. rholo's `rho:crypto:secp256k1Verify` consumes DER over a 32-byte
+// prehash, so this converts each signature to DER and lets Guard.rho count signers. The
+// v byte is not needed for verification; low-S is enforced by the signer.
+
+contract hyperlaneEthSigned(@digest, ret) = {
+  new hCh in {
+    hash!("19457468657265756d205369676e6564204d6573736167653a0a3332".hexToBytes() ++ digest, *hCh) |
+    for (@h <- hCh) { ret!(h) }
+  }
+} |
+
+contract hyperlaneDomainHash(@originBytes, @tree, ret) = {
+  new hCh in {
+    hash!(originBytes ++ tree ++ "HYPERLANE".toUtf8Bytes(), *hCh) |
+    for (@h <- hCh) { ret!(h) }
+  }
+} |
+
+contract hyperlaneCheckpointDigest(@domain, @root, @indexBytes, @messageId, ret) = {
+  new innerCh, signedCh in {
+    hash!(domain ++ root ++ indexBytes ++ messageId, *innerCh) |
+    for (@inner <- innerCh) {
+      hyperlaneEthSigned!(inner, *signedCh) |
+      for (@signed <- signedCh) { ret!(signed) }
+    }
+  }
+} |
+
+// Strip leading zero bytes, keeping at least one.
+contract hyperlaneStripZeros(@bytes, @i, ret) = {
+  if (i >= bytes.length() - 1) {
+    ret!(bytes.slice(i, bytes.length()))
+  } else if (bytes.nth(i) == 0) {
+    hyperlaneStripZeros!(bytes, i + 1, *ret)
+  } else {
+    ret!(bytes.slice(i, bytes.length()))
+  }
+} |
+
+// DER INTEGER: 0x02 || length || body, with a 0x00 pad when the high bit is set.
+contract hyperlaneDerInt(@bytes, ret) = {
+  new strippedCh, lenCh in {
+    hyperlaneStripZeros!(bytes, 0, *strippedCh) |
+    for (@stripped <- strippedCh) {
+      if (stripped.nth(0) >= 128) {
+        byteAt!(stripped.length() + 1, *lenCh) |
+        for (@lenByte <- lenCh) {
+          ret!("02".hexToBytes() ++ lenByte ++ "00".hexToBytes() ++ stripped)
+        }
+      } else {
+        byteAt!(stripped.length(), *lenCh) |
+        for (@lenByte <- lenCh) {
+          ret!("02".hexToBytes() ++ lenByte ++ stripped)
+        }
+      }
+    }
+  }
+} |
+
+// DER SEQUENCE: 0x30 || length || r || s.
+contract hyperlaneCompactToDer(@signature, ret) = {
+  if (signature.length() != 65) {
+    ret!((false, "signature length"))
+  } else {
+    new rCh, sCh, lenCh in {
+      hyperlaneDerInt!(signature.slice(0, 32), *rCh) |
+      hyperlaneDerInt!(signature.slice(32, 64), *sCh) |
+      for (@r <- rCh; @s <- sCh) {
+        byteAt!(r.length() + s.length(), *lenCh) |
+        for (@lenByte <- lenCh) {
+          ret!((true, "30".hexToBytes() ++ lenByte ++ r ++ s))
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneSigsToDer(@sigs, @i, @acc, ret) = {
+  if (i >= sigs.length()) {
+    ret!((true, acc))
+  } else {
+    new dCh in {
+      hyperlaneCompactToDer!(sigs.nth(i), *dCh) |
+      for (@d <- dCh) {
+        match d {
+          (true, der) => { hyperlaneSigsToDer!(sigs, i + 1, acc ++ [der], *ret) }
+          _ => { ret!((false, "signature encoding")) }
+        }
+      }
+    }
+  }
+} |
+
+// Split the metadata tail (starting at byte 68) into 65-byte signatures.
+contract hyperlaneSplitSignatures(@metadata, @i, @acc, ret) = {
+  if (68 + i * 65 + 65 > metadata.length()) {
+    ret!(acc)
+  } else {
+    hyperlaneSplitSignatures!(
+      metadata,
+      i + 1,
+      acc ++ [metadata.slice(68 + i * 65, 68 + (i + 1) * 65)],
+      *ret)
+  }
+} |
+// Convert an ASCII payload body (bytes) to a Rholang string.
+//
+// Rholang has no bytes-to-string constructor. The canonical r-bridge payload is printable
+// ASCII (32..126), excluding the double-quote and backslash bytes (34 and 92), whose
+// Rholang string escapes are ambiguous in this term. Any byte outside that set is refused.
+
+contract hyperlaneAsciiChar(@byte, ret) = {
+  if (byte < 32 || byte > 126 || byte == 34 || byte == 92) {
+    ret!((false, "non-ascii"))
+  } else {
+    ret!((true, [" ", "!", "", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?", "@", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "[", "", "]", "^", "_", "`", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "{", "|", "}", "~"].nth(byte - 32)))
+  }
+} |
+
+contract hyperlaneBytesToAscii(@bytes, @i, @acc, ret) = {
+  if (i >= bytes.length()) {
+    ret!((true, acc))
+  } else {
+    new cCh in {
+      hyperlaneAsciiChar!(bytes.nth(i), *cCh) |
+      for (@c <- cCh) {
+        match c {
+          (true, char) => { hyperlaneBytesToAscii!(bytes, i + 1, acc ++ char, *ret) }
+          _ => { ret!((false, "non-ascii")) }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneAsciiDigit(@char, ret) = {
+  if (char == "0") { ret!((true, 0)) }
+  else if (char == "1") { ret!((true, 1)) }
+  else if (char == "2") { ret!((true, 2)) }
+  else if (char == "3") { ret!((true, 3)) }
+  else if (char == "4") { ret!((true, 4)) }
+  else if (char == "5") { ret!((true, 5)) }
+  else if (char == "6") { ret!((true, 6)) }
+  else if (char == "7") { ret!((true, 7)) }
+  else if (char == "8") { ret!((true, 8)) }
+  else if (char == "9") { ret!((true, 9)) }
+  else { ret!((false, "digit")) }
+} |
+
+contract hyperlaneAsciiToInt(@text, @i, @acc, ret) = {
+  if (i >= text.length()) {
+    ret!((true, acc))
+  } else {
+    new dCh in {
+      hyperlaneAsciiDigit!(text.slice(i, i + 1), *dCh) |
+      for (@d <- dCh) {
+        match d {
+          (true, digit) => { hyperlaneAsciiToInt!(text, i + 1, acc * 10 + digit, *ret) }
+          _ => { ret!((false, "digit")) }
+        }
+      }
+    }
+  }
+} |
+// Hyperlane interchain security modules.
+//
+// v1 has two modules behind the same `verify`/`moduleType` surface:
+// - hyperlaneTestIsm: a switchable verdict for development and refusal tests.
+// - hyperlaneTrustedRelayerIsm: accepts only a message whose Mailbox processor is the
+//   configured relayer. This is Hyperlane's TrustedRelayerISM.
+//
+// The Mailbox passes the processor id it is about to record as a fourth argument. This
+// avoids a call back into the Mailbox while its single state cell is consumed, which
+// would deadlock in Rholang. The three-argument form is kept for the standard interface
+// and refuses unless an empty processor happens to match the configuration.
+//
+// The multisig module (checkpoint signatures over message ids) lives in a later phase.
+
+contract hyperlaneTestIsm(@"moduleType", ret) = { ret!(6) } |
+
+contract hyperlaneTestIsm(@"verify", @metadata, @message, ret) = {
+  hyperlaneTestIsm!("verify", metadata, message, "", *ret)
+} |
+
+contract hyperlaneTestIsm(@"verify", @metadata, @message, @processor, ret) = {
+  for (@s <- ismState) {
+    ismState!(s) |
+    ret!(s.get("accept"))
+  }
+} |
+
+contract hyperlaneTestIsm(@"setAccept", @value, ret) = {
+  for (@s <- ismState) {
+    ismState!(s.set("accept", value)) |
+    ret!(true)
+  }
+} |
+
+// Devnet configuration arm: the trusted module reads the same shared ismState. Production
+// fixes the relayer at install and omits this arm.
+contract hyperlaneTestIsm(@"setTrustedRelayer", @value, ret) = {
+  for (@s <- ismState) {
+    ismState!(s.set("trustedRelayer", value)) |
+    ret!(true)
+  }
+} |
+
+// Hyperlane's TrustedRelayerIsm: the message is accepted when the Mailbox records the
+// configured relayer as its processor. `processor` is a lowercase hex bytes32 id.
+contract hyperlaneTrustedRelayerIsm(@"moduleType", ret) = { ret!(6) } |
+
+contract hyperlaneTrustedRelayerIsm(@"verify", @metadata, @message, ret) = {
+  hyperlaneTrustedRelayerIsm!("verify", metadata, message, "", *ret)
+} |
+
+contract hyperlaneTrustedRelayerIsm(@"verify", @metadata, @message, @processor, ret) = {
+  for (@s <- ismState) {
+    ismState!(s) |
+    ret!(processor == s.get("trustedRelayer"))
+  }
+} |
+
+// MessageIdMultisigISM. The validator set is stored as 65-byte secp256k1 public keys;
+// the metadata carries the origin tree, signed root, signed index and compact signatures.
+// Guard.rho counts each key at most once, so duplicate signatures cannot meet a threshold.
+contract hyperlaneMultisigIsm(@"moduleType", ret) = { ret!(5) } |
+
+contract hyperlaneMultisigIsm(@"validatorsAndThreshold", @message, ret) = {
+  for (@s <- ismState) {
+    ismState!(s) |
+    ret!((s.get("validators"), s.get("threshold")))
+  }
+} |
+
+contract hyperlaneMultisigIsm(@"verify", @metadata, @message, ret) = {
+  hyperlaneMultisigIsm!("verify", metadata, message, "", *ret)
+} |
+
+contract hyperlaneMultisigIsm(@"verify", @metadata, @message, @processor, ret) = {
+  if (metadata.length() < 68) {
+    ret!(false)
+  } else if ((metadata.length() - 68) % 65 != 0) {
+    ret!(false)
+  } else {
+    for (@s <- ismState) {
+      ismState!(s) |
+      new idCh, domainCh, digestCh, sigsCh, derCh, okCh in {
+        hyperlaneMessageId!(message, *idCh) |
+        for (@id <- idCh) {
+          hyperlaneDomainHash!(message.slice(5, 9), metadata.slice(0, 32), *domainCh) |
+          for (@domain <- domainCh) {
+            hyperlaneCheckpointDigest!(
+              domain, metadata.slice(32, 64), metadata.slice(64, 68), id, *digestCh) |
+            for (@digest <- digestCh) {
+              hyperlaneSplitSignatures!(metadata, 0, [], *sigsCh) |
+              for (@sigs <- sigsCh) {
+                hyperlaneSigsToDer!(sigs, 0, [], *derCh) |
+                for (@der <- derCh) {
+                  match der {
+                    (true, derSigs) => {
+                      guardCount!(digest, derSigs, 0, 0, s.get("validators"), s.get("threshold"), *okCh) |
+                      for (@ok <- okCh) {
+                        ret!(ok)
+                      }
+                    }
+                    _ => { ret!(false) }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+// Hyperlane Mailbox for rholo.
+//
+// The public surface follows the Hyperlane alt-VM guide: localDomain, nonce, delivered,
+// processor, processedAt, dispatched, latestDispatchedId, quoteDispatch and process.
+// Dispatch is deliberately capability-gated: the public bundle does not expose it. The
+// Router (or the harness) holds `hyperlaneDispatchDoor`, which fixes the sender id to
+// the configured r-bridge peer id and calls the internal dispatcher.
+//
+// State is one cell (mailboxState); every arm consumes, validates and reposts exactly
+// once. `process` records delivery only after the recipient's handle returns true, so a
+// refused delivery leaves no trace.
+
+contract hyperlaneCallerId(dId, ret) = {
+  new dops(`rho:rchain:deployerId:ops`), pkCh, hCh, hash(`rho:crypto:keccak256Hash`) in {
+    dops!("pubKeyBytes", *dId, *pkCh) |
+    for (@pk <- pkCh) {
+      hash!(pk, *hCh) |
+      for (@h <- hCh) { ret!(h) }
+    }
+  }
+} |
+
+// The internal dispatcher. Not registered; only the door and the Router hold it.
+contract hyperlaneMailboxDispatch(@sender, @destination, @recipient, @body, @metadata, ret) = {
+  for (@s <- mailboxState) {
+    new msgCh, idCh, reqCh, defCh in {
+      hyperlaneMessageV3!(3, s.get("nonce"), s.get("localDomain"), sender, destination, recipient, body, *msgCh) |
+      for (@message <- msgCh) {
+        hyperlaneMessageId!(message, *idCh) |
+        for (@id <- idCh) {
+          hyperlaneRequiredHook!("postDispatch", metadata, message, *reqCh) |
+          for (@requiredOk <- reqCh) {
+            if (requiredOk == false) {
+              mailboxState!(s) | ret!((false, "hook"))
+            } else {
+              hyperlaneDefaultHook!("postDispatch", metadata, message, *defCh) |
+              for (@defaultOk <- defCh) {
+                if (defaultOk == false) {
+                  mailboxState!(s) | ret!((false, "hook"))
+                } else {
+                  mailboxState!(s
+                    .set("nonce", s.get("nonce") + 1)
+                    .set("latestDispatchedId", id.bytesToHex())
+                    .set("dispatched", s.get("dispatched").set(id.bytesToHex(), message.bytesToHex()))) |
+                  ret!((true, id.bytesToHex()))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+// Capability-gated dispatch. The sender id is the r-bridge peer identity, not the caller.
+contract hyperlaneDispatchDoor(@"dispatch", @destination, @recipient, @body, @metadata, ret) = {
+  hyperlaneMailboxDispatch!(__SENDER_ID__, destination, recipient, body, metadata, *ret)
+} |
+
+contract hyperlaneMailbox(@"localDomain", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("localDomain"))
+  }
+} |
+
+contract hyperlaneMailbox(@"nonce", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("nonce"))
+  }
+} |
+
+contract hyperlaneMailbox(@"latestDispatchedId", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("latestDispatchedId"))
+  }
+} |
+
+contract hyperlaneMailbox(@"defaultIsm", ret) = { ret!("hyperlaneIsm") } |
+contract hyperlaneMailbox(@"defaultHook", ret) = { ret!("hyperlaneDefaultHook") } |
+contract hyperlaneMailbox(@"requiredHook", ret) = { ret!("hyperlaneRequiredHook") } |
+
+contract hyperlaneMailbox(@"delivered", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("deliveries").get(idHex) {
+      Nil => { ret!(false) }
+      _ => { ret!(true) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"processor", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("deliveries").get(idHex) {
+      Nil => { ret!("") }
+      d => { ret!(d.get("processor")) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"processedAt", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("deliveries").get(idHex) {
+      Nil => { ret!(0) }
+      d => { ret!(d.get("block")) }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"dispatched", @idHex, ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    match s.get("dispatched").get(idHex) {
+      Nil => { ret!((false, "unknown message")) }
+      m => { ret!((true, m)) }
+    }
+  }
+} |
+
+// Message ids in dispatch order, for a relayer/agent that must enumerate outbound work.
+contract hyperlaneMailbox(@"dispatchedIds", ret) = {
+  for (@s <- mailboxState) {
+    mailboxState!(s) |
+    ret!(s.get("dispatched").keys().toList())
+  }
+} |
+
+contract hyperlaneMailbox(@"quoteDispatch", @destination, @recipient, @body, @metadata, ret) = {
+  ret!(0)
+} |
+
+// Record delivery and call the recipient. The Mailbox state is held by `process`; this
+// helper reposts it exactly once on every path.
+contract hyperlaneDeliver(@s, @id, @message, @proc, ret) = {
+  new originCh, senderCh, bodyCh, bdCh in {
+    hyperlaneOrigin!(message, *originCh) |
+    hyperlaneSender!(message, *senderCh) |
+    hyperlaneBody!(message, *bodyCh) |
+    for (@origin <- originCh; @sender <- senderCh; @body <- bodyCh) {
+      blockData!(*bdCh) |
+      for (@blockNumber, @blockSender, @blockTimestamp <- bdCh) {
+        new handleCh in {
+          hyperlaneRecipientContract!("handle", origin, sender, body, *handleCh) |
+          for (@handled <- handleCh) {
+            if (handled == false) {
+              mailboxState!(s) | ret!((false, "recipient"))
+            } else {
+              mailboxState!(s.set("deliveries", s.get("deliveries").set(id.bytesToHex(), {
+                "processor": proc.bytesToHex(),
+                "block": blockNumber
+              }))) |
+              ret!((true, id.bytesToHex()))
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneMailbox(@"process", @metadata, @message, ret) = {
+  for (@s <- mailboxState) {
+    new validCh, destCh, idCh, ismCh, procCh in {
+      hyperlaneMessageValid!(message, *validCh) |
+      for (@valid <- validCh) {
+        if (valid == false) {
+          mailboxState!(s) | ret!((false, "version"))
+        } else {
+          hyperlaneDestination!(message, *destCh) |
+          for (@dest <- destCh) {
+            if (dest != s.get("localDomain")) {
+              mailboxState!(s) | ret!((false, "destination"))
+            } else {
+              hyperlaneMessageId!(message, *idCh) |
+              for (@id <- idCh) {
+                match s.get("deliveries").get(id.bytesToHex()) {
+                  Nil => {
+                    hyperlaneCallerId!(*deployerId, *procCh) |
+                    for (@proc <- procCh) {
+                      hyperlaneIsm!("verify", metadata, message, proc.bytesToHex(), *ismCh) |
+                      for (@ok <- ismCh) {
+                        if (ok == false) {
+                          mailboxState!(s) | ret!((false, "ism"))
+                        } else {
+                          hyperlaneDeliver!(s, id, message, proc, *ret)
+                        }
+                      }
+                    }
+                  }
+                  _ => { mailboxState!(s) | ret!((false, "already delivered")) }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+// The r-bridge Hyperlane Router.
+//
+// Inbound: the Mailbox calls hyperlaneRouterHandle(origin, sender, body). The sender must
+// match the peer enrolled for the origin domain; the body must be the canonical r-bridge
+// deposit payload; the Router then calls the Bridge's private mint capability.
+//
+// Outbound: the Bridge's burn calls dispatchWithdrawal, which builds the canonical
+// withdraw payload and dispatches it through the Mailbox door to the routed peer.
+//
+// Routes are deployment state (byDomain for inbound, routes by chain name for outbound).
+
+contract hyperlaneRouterHandle(@origin, @sender, @body, ret) = {
+  for (@s <- routerState) {
+    match s.get("byDomain").get(origin.toString()) {
+      Nil => {
+        routerState!(s) | ret!(false)
+      }
+      peer => {
+        if (peer != sender.bytesToHex()) {
+          routerState!(s) | ret!(false)
+        } else {
+          new asciiCh in {
+            hyperlaneBytesToAscii!(body, 0, "", *asciiCh) |
+            for (@ascii <- asciiCh) {
+              match ascii {
+                (true, text) => { hyperlaneRouterParse!(s, text, *ret) }
+                _ => { routerState!(s) | ret!(false) }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneRouterParse(@s, @text, ret) = {
+  match text.split("|") {
+    fields => {
+      if (fields.length() != 7) {
+        routerState!(s) | ret!(false)
+      } else if (fields.nth(0) != "rbridge:hyperlane:v1") {
+        routerState!(s) | ret!(false)
+      } else if (fields.nth(1) != "deposit") {
+        routerState!(s) | ret!(false)
+      } else {
+        new amountCh, nonceCh in {
+          hyperlaneAsciiToInt!(fields.nth(3), 0, 0, *amountCh) |
+          hyperlaneAsciiToInt!(fields.nth(6), 0, 0, *nonceCh) |
+          for (@amountR <- amountCh; @nonceR <- nonceCh) {
+            match (amountR, nonceR) {
+              ((true, amount), (true, nonce)) => {
+                if (amount <= 0) {
+                  routerState!(s) | ret!(false)
+                } else {
+                  new mintCh in {
+                    bridgeHyperlaneMint!(fields.nth(2), fields.nth(5), amount, fields.nth(4), nonce, *mintCh) |
+                    for (@m <- mintCh) {
+                      match m {
+                        (true, credited) => { routerState!(s) | ret!(true) }
+                        _ => { routerState!(s) | ret!(false) }
+                      }
+                    }
+                  }
+                }
+              }
+              _ => { routerState!(s) | ret!(false) }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneRouter(@"dispatchWithdrawal", @destChain, @destAddress, @withdrawalId, @assetKey, @amount, @nonce, ret) = {
+  for (@s <- routerState) {
+    match s.get("routes").get(destChain) {
+      Nil => {
+        routerState!(s) | ret!((false, "unrouted chain"))
+      }
+      route => {
+        routerState!(s) |
+        match "rbridge:hyperlane:v1|withdraw|" ++ assetKey ++ "|" ++ amount.toString() ++ "|" ++ destAddress ++ "|" ++ withdrawalId ++ "|" ++ nonce.toString() {
+          payload => {
+            new dCh in {
+              hyperlaneDispatchDoor!("dispatch", route.get("domain"), route.get("peer").hexToBytes(), payload.toUtf8Bytes(), "".hexToBytes(), *dCh) |
+              for (@d <- dCh) {
+                ret!(d)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneRouter(@"routes", ret) = {
+  for (@s <- routerState) {
+    routerState!(s) |
+    ret!(s.get("routes"))
+  }
+} |
+
+contract hyperlaneRouter(@"byDomain", ret) = {
+  for (@s <- routerState) {
+    routerState!(s) |
+    ret!(s.get("byDomain"))
+  }
+} |
+
+  contract hyperlaneIsm(@"verify", @metadata, @message, @processor, ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      if (s.get("mode") == "trusted") {
+        hyperlaneTrustedRelayerIsm!("verify", metadata, message, processor, *ret)
+      } else if (s.get("mode") == "multisig") {
+        hyperlaneMultisigIsm!("verify", metadata, message, processor, *ret)
+      } else {
+        hyperlaneTestIsm!("verify", metadata, message, processor, *ret)
+      }
+    }
+  } |
+
+  contract hyperlaneIsm(@"verify", @metadata, @message, ret) = {
+    hyperlaneIsm!("verify", metadata, message, "", *ret)
+  } |
+
+  contract hyperlaneIsm(@"moduleType", ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      if (s.get("mode") == "multisig") { ret!(5) } else { ret!(6) }
+    }
+  } |
+
+  contract hyperlaneIsm(@"setMode", @mode, ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s.set("mode", mode)) |
+      ret!(true)
+    }
+  } |
+
+  contract hyperlaneIsm(@"mode", ret) = {
+    for (@s <- moduleState) {
+      moduleState!(s) |
+      ret!(s.get("mode"))
+    }
+  } |
+
+  contract hyperlaneIsm(@"setAccept", @value, ret) = {
+    hyperlaneTestIsm!("setAccept", value, *ret)
+  } |
+
+  contract hyperlaneIsm(@"setTrustedRelayer", @value, ret) = {
+    hyperlaneTestIsm!("setTrustedRelayer", value, *ret)
+  } |
+
+  contract hyperlaneRequiredHook(@"postDispatch", @metadata, @message, ret) = { ret!(true) } |
+
+  contract hyperlaneDefaultHook(@"postDispatch", @metadata, @message, ret) = {
+    hyperlaneMerkleTreeHook!("postDispatch", metadata, message, *ret)
+  } |
+
+  contract hyperlaneRecipientContract(@"handle", @origin, @sender, @body, ret) = {
+    hyperlaneRouterHandle!(origin, sender, body, *ret)
+  } |
+
+  hyperlaneZeroHashes!(0, "0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(), [], *zeroesCh) |
+  for (@zeroes <- zeroesCh) {
+    hyperlaneListRepeat!("0000000000000000000000000000000000000000000000000000000000000000".hexToBytes(), 32, 0, [], *branchCh) |
+    for (@branch <- branchCh) {
+      bridgeState!({
+        "network": __NETWORK__,
+        "bridgeId": __BRIDGE_ID__,
+        "treasury": __TREASURY__,
+        "admins": __ADMINS__,
+        "adminThreshold": __ADMIN_THRESHOLD__,
+        "relayers": __RELAYERS__,
+        "relayerThreshold": __RELAYER_THRESHOLD__,
+        "assets": __ASSETS__,
+        "balances": {},
+        "fees": {},
+        "processedDeposits": {},
+        "withdrawals": {},
+        "paused": false,
+        "adminNonce": 0,
+        "hyperlane": true
+      }) |
+      routerState!({
+        "byDomain": __BY_DOMAIN__,
+        "routes": __ROUTES__
+      }) |
+      mailboxState!({
+        "localDomain": __LOCAL_DOMAIN__,
+        "nonce": 0,
+        "latestDispatchedId": "",
+        "deliveries": {},
+        "dispatched": {}
+      }) |
+      ismState!({
+        "accept": true,
+        "trustedRelayer": __TRUSTED_RELAYER__,
+        "validators": __VALIDATORS__,
+        "threshold": __THRESHOLD__
+      }) |
+      moduleState!({
+        "mode": __ISM_MODE__
+      }) |
+      hookState!({
+        "branch": branch,
+        "zeroes": zeroes,
+        "count": 0,
+        "latest": "",
+        "treeId": __TREE_ID__
+      }) |
+      rs!(bundle+{*Bridge}, *bridgeUri) |
+      rs!(bundle+{*hyperlaneMailbox}, *mailboxUri) |
+      rs!(bundle+{*hyperlaneIsm}, *ismUri) |
+      rs!(bundle+{*hyperlaneMerkleTreeHook}, *hookUri) |
+      for (@b <- bridgeUri; @m <- mailboxUri; @i <- ismUri; @h <- hookUri) {
+        deployId!([b, m, i, h])
+      }
+    }
+  }
+}

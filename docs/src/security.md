@@ -76,15 +76,20 @@ An external audit should cover, at minimum:
 
 1. `contracts/rholo` — the single demo contract now, and the planned
    `BridgeRoot`/`WrappedToken` split before it is deployed.
-2. `contracts/evm/src/BridgeVault.sol` and its TVM compilation and deployment parameters.
-3. `contracts/agoric` — the vat, the digest verification, invitation handling and durable
+2. `contracts/rholo` Hyperlane suite (`10_hyperlane.rho`, `11_rbridge_hyperlane.rho`) —
+   the Mailbox, merkle hook, ISMs, Router, and the Bridge's mint capability and burn
+   dispatch.
+3. `contracts/evm/src/BridgeVault.sol` and its TVM compilation and deployment parameters.
+4. `contracts/evm/src/HyperlanePeer.sol` and `RbridgeTrustedRelayerIsm.sol` — the
+   multi-asset Ethereum stablecoin endpoint and its application ISM.
+5. `contracts/agoric` — the vat, the digest verification, invitation handling and durable
    state.
-4. The canonical message and every signature encoding, against the golden vectors in
-   `spec/attestation.md`.
-5. `crates/rbridge-keystore` and the WASM key handling, including browser storage.
-6. The chosen relayer rail: watcher correctness, journal, reorg handling, key management
+6. The canonical message and every signature encoding, against the golden vectors in
+   `spec/attestation.md` and `spec/hyperlane.md`.
+7. `crates/rbridge-keystore` and the WASM key handling, including browser storage.
+8. The chosen relayer rail: watcher correctness, journal, reorg handling, key management
    and incident tooling.
-7. The deployment tool and manifest verification.
+9. The deployment tool and manifest verification.
 
 ## Explicit non-goals today
 

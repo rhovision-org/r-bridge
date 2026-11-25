@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 use rbridge_chain::{DeployOptions, DeployStatus, KeyPair, RholoNode};
 use rbridge_core::{
-    from_hex, initial_registry, keccak256, to_hex, Amount, AssetRef, AttestationMessage, Chain,
-    Direction,
+    from_hex, hyperlane, initial_registry, keccak256, to_hex, Amount, AssetRef, AttestationMessage,
+    Chain, Direction,
 };
 use rbridge_sdk::{BridgeClient, BridgeConfig};
 use serde_json::json;
@@ -128,6 +128,75 @@ enum Command {
     Relayer {
         #[command(subcommand)]
         command: RelayerCommand,
+    },
+    /// Hyperlane v3 message, checkpoint and r-bridge payload encoders.
+    Hyperlane {
+        #[command(subcommand)]
+        command: HyperlaneCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum HyperlaneCommand {
+    /// Encode a v3 message and print its id.
+    Message {
+        #[arg(long)]
+        nonce: u32,
+        #[arg(long)]
+        origin: u32,
+        #[arg(long)]
+        sender: String,
+        #[arg(long)]
+        destination: u32,
+        #[arg(long)]
+        recipient: String,
+        /// UTF-8 body.
+        #[arg(long)]
+        body: String,
+    },
+    /// Print the checkpoint digest validators sign.
+    Checkpoint {
+        #[arg(long)]
+        origin: u32,
+        #[arg(long)]
+        merkle_tree: String,
+        #[arg(long)]
+        root: String,
+        #[arg(long)]
+        index: u32,
+        #[arg(long)]
+        message_id: String,
+    },
+    /// Encode the r-bridge payload carried in a Hyperlane body.
+    Payload {
+        #[arg(long)]
+        action: Direction,
+        #[arg(long)]
+        asset: String,
+        /// Amount in rholo base units.
+        #[arg(long)]
+        amount: i64,
+        #[arg(long)]
+        recipient: String,
+        #[arg(long)]
+        external_id: String,
+        #[arg(long, default_value_t = 0)]
+        nonce: u64,
+    },
+    /// Decode a dispatched message.
+    ParseMessage {
+        #[arg(long)]
+        message: String,
+    },
+    /// Decode multisig ISM metadata.
+    ParseMetadata {
+        #[arg(long)]
+        metadata: String,
+    },
+    /// Derive the Mailbox processor id (keccak256 of a 65-byte public key).
+    Processor {
+        #[arg(long)]
+        pubkey: String,
     },
 }
 
@@ -317,8 +386,129 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Command::Relayer { command } => relayer_command(command).await?,
+        Command::Hyperlane { command } => hyperlane_command(command)?,
     }
     Ok(())
+}
+
+fn hyperlane_command(command: HyperlaneCommand) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
+        HyperlaneCommand::Message {
+            nonce,
+            origin,
+            sender,
+            destination,
+            recipient,
+            body,
+        } => {
+            let message = hyperlane::Message::new(
+                nonce,
+                origin,
+                word32(&sender)?,
+                destination,
+                word32(&recipient)?,
+                body.into_bytes(),
+            );
+            println!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "message": to_hex(&message.encode()),
+                    "id": message.id_hex(),
+                }))?
+            );
+        }
+        HyperlaneCommand::Checkpoint {
+            origin,
+            merkle_tree,
+            root,
+            index,
+            message_id,
+        } => {
+            let digest = hyperlane::checkpoint_digest(
+                origin,
+                word32(&merkle_tree)?,
+                word32(&root)?,
+                index,
+                word32(&message_id)?,
+            );
+            println!(
+                "{}",
+                serde_json::to_string(&json!({"digest": to_hex(&digest)}))?
+            );
+        }
+        HyperlaneCommand::Payload {
+            action,
+            asset,
+            amount,
+            recipient,
+            external_id,
+            nonce,
+        } => {
+            let payload = hyperlane::Payload {
+                action,
+                asset_key: asset,
+                amount,
+                recipient,
+                external_id,
+                nonce,
+            };
+            println!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "canonical": payload.canonical(),
+                    "body": to_hex(&payload.encode()?),
+                }))?
+            );
+        }
+        HyperlaneCommand::ParseMessage { message } => {
+            let bytes = from_hex(message.trim_start_matches("0x"))?;
+            let message = hyperlane::Message::decode(&bytes)?;
+            println!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "version": message.version,
+                    "nonce": message.nonce,
+                    "origin": message.origin,
+                    "sender": to_hex(&message.sender),
+                    "destination": message.destination,
+                    "recipient": to_hex(&message.recipient),
+                    "body": to_hex(&message.body),
+                    "id": to_hex(&message.id()),
+                }))?
+            );
+        }
+        HyperlaneCommand::ParseMetadata { metadata } => {
+            let bytes = from_hex(metadata.trim_start_matches("0x"))?;
+            let metadata = hyperlane::IsmMetadata::decode(&bytes)?;
+            println!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "origin_merkle_tree": to_hex(&metadata.origin_merkle_tree),
+                    "root": to_hex(&metadata.root),
+                    "index": metadata.index,
+                    "signature_count": metadata.signature_count(),
+                }))?
+            );
+        }
+        HyperlaneCommand::Processor { pubkey } => {
+            let bytes = from_hex(pubkey.trim_start_matches("0x"))?;
+            println!(
+                "{}",
+                serde_json::to_string(&json!({"processor": to_hex(&keccak256(&bytes))}))?
+            );
+        }
+    }
+    Ok(())
+}
+
+fn word32(text: &str) -> Result<[u8; 32], Box<dyn std::error::Error>> {
+    let bytes = from_hex(text.trim_start_matches("0x"))?;
+    if bytes.len() != 32 {
+        return Err(format!("expected a 32-byte value, got {} bytes", bytes.len()).into());
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }
 
 async fn relayer_command(command: RelayerCommand) -> Result<(), Box<dyn std::error::Error>> {

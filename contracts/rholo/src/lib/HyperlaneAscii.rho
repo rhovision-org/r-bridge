@@ -1,0 +1,59 @@
+// Convert an ASCII payload body (bytes) to a Rholang string.
+//
+// Rholang has no bytes-to-string constructor. The canonical r-bridge payload is printable
+// ASCII (32..126), excluding the double-quote and backslash bytes (34 and 92), whose
+// Rholang string escapes are ambiguous in this term. Any byte outside that set is refused.
+
+contract hyperlaneAsciiChar(@byte, ret) = {
+  if (byte < 32 || byte > 126 || byte == 34 || byte == 92) {
+    ret!((false, "non-ascii"))
+  } else {
+    ret!((true, [" ", "!", "", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?", "@", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "[", "", "]", "^", "_", "`", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "{", "|", "}", "~"].nth(byte - 32)))
+  }
+} |
+
+contract hyperlaneBytesToAscii(@bytes, @i, @acc, ret) = {
+  if (i >= bytes.length()) {
+    ret!((true, acc))
+  } else {
+    new cCh in {
+      hyperlaneAsciiChar!(bytes.nth(i), *cCh) |
+      for (@c <- cCh) {
+        match c {
+          (true, char) => { hyperlaneBytesToAscii!(bytes, i + 1, acc ++ char, *ret) }
+          _ => { ret!((false, "non-ascii")) }
+        }
+      }
+    }
+  }
+} |
+
+contract hyperlaneAsciiDigit(@char, ret) = {
+  if (char == "0") { ret!((true, 0)) }
+  else if (char == "1") { ret!((true, 1)) }
+  else if (char == "2") { ret!((true, 2)) }
+  else if (char == "3") { ret!((true, 3)) }
+  else if (char == "4") { ret!((true, 4)) }
+  else if (char == "5") { ret!((true, 5)) }
+  else if (char == "6") { ret!((true, 6)) }
+  else if (char == "7") { ret!((true, 7)) }
+  else if (char == "8") { ret!((true, 8)) }
+  else if (char == "9") { ret!((true, 9)) }
+  else { ret!((false, "digit")) }
+} |
+
+contract hyperlaneAsciiToInt(@text, @i, @acc, ret) = {
+  if (i >= text.length()) {
+    ret!((true, acc))
+  } else {
+    new dCh in {
+      hyperlaneAsciiDigit!(text.slice(i, i + 1), *dCh) |
+      for (@d <- dCh) {
+        match d {
+          (true, digit) => { hyperlaneAsciiToInt!(text, i + 1, acc * 10 + digit, *ret) }
+          _ => { ret!((false, "digit")) }
+        }
+      }
+    }
+  }
+} |
